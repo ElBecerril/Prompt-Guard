@@ -1,0 +1,566 @@
+{
+  "scan_date": "2026-02-07T20:09:13.855639",
+  "source": "./ui-ux-pro-max-skill",
+  "total_files": 107,
+  "files_flagged": 21,
+  "summary": {
+    "critical": 0,
+    "high": 0,
+    "medium": 45,
+    "low": 0
+  },
+  "findings": [
+    {
+      "file": "cli\\assets\\data\\react-performance.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 29,
+          "content": "28,Rendering,Hydration No Flicker,hydration mismatch flicker,React/Next.js,Use inline script to set client-only data before hydration,Inject sync script for client-only values,Use useEffect causing fl",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "cli\\assets\\data\\ux-guidelines.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 52,
+          "content": "51,Performance,Third Party Scripts,Web,External scripts can block rendering,Load non-critical scripts async/defer,Synchronous third-party scripts,async or defer attribute,<script src='...'> in head,Me",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "cli\\assets\\data\\web-interface.csv",
+      "score": 10,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 28,
+          "content": "27,Anti-Pattern,No Zoom Disable,viewport zoom disable,Web,Never disable zoom in viewport meta,Allow user zoom,\"<meta name='viewport' content='width=device-width'>\",\"<meta name='viewport' content='maxi",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 28,
+          "content": "27,Anti-Pattern,No Zoom Disable,viewport zoom disable,Web,Never disable zoom in viewport meta,Allow user zoom,\"<meta name='viewport' content='width=device-width'>\",\"<meta name='viewport' content='maxi",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        }
+      ]
+    },
+    {
+      "file": "cli\\assets\\data\\stacks\\astro.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 12,
+          "content": "11,Components,Use framework components for interactivity,React Vue Svelte for complex interactivity,Framework component with client directive,Astro component with inline scripts,<ReactCounter client:l",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "cli\\assets\\data\\stacks\\nuxt-ui.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 47,
+          "content": "46,Editor,Use UEditor for rich text,TipTap-based editor with toolbar support,UEditor with v-model:content,Custom TipTap setup,\"<UEditor v-model:content=\"\"content\"\"/>\",Manual TipTap initialization,Medi",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        }
+      ]
+    },
+    {
+      "file": "cli\\assets\\data\\stacks\\nuxtjs.csv",
+      "score": 10,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 18,
+          "content": "17,Lifecycle,Avoid side effects in script setup root,Move side effects to lifecycle hooks,Side effects in onMounted,setInterval in root script setup,\"onMounted(() => { interval = setInterval(...) })\",",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 19,
+          "content": "18,Lifecycle,Use onMounted for DOM access,Access DOM only after component is mounted,onMounted for DOM manipulation,Direct DOM access in setup,\"onMounted(() => { document.getElementById('el') })\",\"<sc",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "cli\\assets\\data\\stacks\\shadcn.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 11,
+          "content": "10,Components,Prefer compound components,Use provided sub-components for complex UI,Card + CardHeader + CardContent pattern,Single component with many props,<Card><CardHeader><CardTitle>,<Card title=\"",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        }
+      ]
+    },
+    {
+      "file": "cli\\assets\\data\\stacks\\svelte.csv",
+      "score": 20,
+      "classification": "SUSPICIOUS",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 50,
+          "content": "49,TypeScript,\"Use lang=\"\"ts\"\" in script\",TypeScript support,\"<script lang=\"\"ts\"\">\",JavaScript for typed projects,\"<script lang=\"\"ts\"\">\",<script> with JSDoc,Medium,https://svelte.dev/docs/typescript",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 50,
+          "content": "49,TypeScript,\"Use lang=\"\"ts\"\" in script\",TypeScript support,\"<script lang=\"\"ts\"\">\",JavaScript for typed projects,\"<script lang=\"\"ts\"\">\",<script> with JSDoc,Medium,https://svelte.dev/docs/typescript",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 50,
+          "content": "49,TypeScript,\"Use lang=\"\"ts\"\" in script\",TypeScript support,\"<script lang=\"\"ts\"\">\",JavaScript for typed projects,\"<script lang=\"\"ts\"\">\",<script> with JSDoc,Medium,https://svelte.dev/docs/typescript",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 26,
+          "content": "25,Slots,Use slots for composition,Content projection,<slot> for flexible content,Props for all content,<slot>Default</slot>,\"<Component content=\"\"text\"\"/>\",Medium,https://svelte.dev/docs/special-elem",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        }
+      ]
+    },
+    {
+      "file": "cli\\assets\\data\\stacks\\vue.csv",
+      "score": 35,
+      "classification": "SUSPICIOUS",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 2,
+          "content": "1,Composition,Use Composition API for new projects,Composition API offers better TypeScript support and logic reuse,<script setup> for components,Options API for new projects,<script setup>,export def",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 2,
+          "content": "1,Composition,Use Composition API for new projects,Composition API offers better TypeScript support and logic reuse,<script setup> for components,Options API for new projects,<script setup>,export def",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 3,
+          "content": "2,Composition,Use script setup syntax,Cleaner syntax with automatic exports,<script setup> with defineProps,setup() function manually,<script setup>,<script> setup() { return {} },Low,https://vuejs.or",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 3,
+          "content": "2,Composition,Use script setup syntax,Cleaner syntax with automatic exports,<script setup> with defineProps,setup() function manually,<script setup>,<script> setup() { return {} },Low,https://vuejs.or",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 3,
+          "content": "2,Composition,Use script setup syntax,Cleaner syntax with automatic exports,<script setup> with defineProps,setup() function manually,<script setup>,<script> setup() { return {} },Low,https://vuejs.or",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 40,
+          "content": "39,TypeScript,Use generic components,Type-safe reusable components,Generic with defineComponent,Any types in components,\"<script setup lang=\"\"ts\"\" generic=\"\"T\"\">\",<script setup> without types,Medium,h",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 40,
+          "content": "39,TypeScript,Use generic components,Type-safe reusable components,Generic with defineComponent,Any types in components,\"<script setup lang=\"\"ts\"\" generic=\"\"T\"\">\",<script setup> without types,Medium,h",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "cli\\assets\\scripts\\design_system.py",
+      "score": 10,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 25,
+          "content": "REASONING_FILE = \"ui-reasoning.csv\"",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        },
+        {
+          "type": "steganographic",
+          "severity": "medium",
+          "score": 5,
+          "line": 1,
+          "content": "First words of paragraphs: '#!/usr/bin/env Usage: # import # SEARCH_CONFIG # def def def def # # # return def if # return def if # # scored.sort(key=lambda def def # # # best_style # return # def def # # lines.append(\"+\" # # # #'",
+          "pattern_matched": "first_word_hidden_message",
+          "description": "Hidden message in first words of paragraphs, contains: 'system'"
+        }
+      ]
+    },
+    {
+      "file": "cli\\src\\utils\\template.ts",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 123,
+          "content": "let quickReferenceContent = '';",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\data\\react-performance.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 29,
+          "content": "28,Rendering,Hydration No Flicker,hydration mismatch flicker,React/Next.js,Use inline script to set client-only data before hydration,Inject sync script for client-only values,Use useEffect causing fl",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\data\\ux-guidelines.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 52,
+          "content": "51,Performance,Third Party Scripts,Web,External scripts can block rendering,Load non-critical scripts async/defer,Synchronous third-party scripts,async or defer attribute,<script src='...'> in head,Me",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\data\\web-interface.csv",
+      "score": 10,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 28,
+          "content": "27,Anti-Pattern,No Zoom Disable,viewport zoom disable,Web,Never disable zoom in viewport meta,Allow user zoom,\"<meta name='viewport' content='width=device-width'>\",\"<meta name='viewport' content='maxi",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 28,
+          "content": "27,Anti-Pattern,No Zoom Disable,viewport zoom disable,Web,Never disable zoom in viewport meta,Allow user zoom,\"<meta name='viewport' content='width=device-width'>\",\"<meta name='viewport' content='maxi",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\data\\stacks\\astro.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 12,
+          "content": "11,Components,Use framework components for interactivity,React Vue Svelte for complex interactivity,Framework component with client directive,Astro component with inline scripts,<ReactCounter client:l",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\data\\stacks\\nuxt-ui.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 47,
+          "content": "46,Editor,Use UEditor for rich text,TipTap-based editor with toolbar support,UEditor with v-model:content,Custom TipTap setup,\"<UEditor v-model:content=\"\"content\"\"/>\",Manual TipTap initialization,Medi",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\data\\stacks\\nuxtjs.csv",
+      "score": 10,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 18,
+          "content": "17,Lifecycle,Avoid side effects in script setup root,Move side effects to lifecycle hooks,Side effects in onMounted,setInterval in root script setup,\"onMounted(() => { interval = setInterval(...) })\",",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 19,
+          "content": "18,Lifecycle,Use onMounted for DOM access,Access DOM only after component is mounted,onMounted for DOM manipulation,Direct DOM access in setup,\"onMounted(() => { document.getElementById('el') })\",\"<sc",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\data\\stacks\\shadcn.csv",
+      "score": 5,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 11,
+          "content": "10,Components,Prefer compound components,Use provided sub-components for complex UI,Card + CardHeader + CardContent pattern,Single component with many props,<Card><CardHeader><CardTitle>,<Card title=\"",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\data\\stacks\\svelte.csv",
+      "score": 20,
+      "classification": "SUSPICIOUS",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 50,
+          "content": "49,TypeScript,\"Use lang=\"\"ts\"\" in script\",TypeScript support,\"<script lang=\"\"ts\"\">\",JavaScript for typed projects,\"<script lang=\"\"ts\"\">\",<script> with JSDoc,Medium,https://svelte.dev/docs/typescript",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 50,
+          "content": "49,TypeScript,\"Use lang=\"\"ts\"\" in script\",TypeScript support,\"<script lang=\"\"ts\"\">\",JavaScript for typed projects,\"<script lang=\"\"ts\"\">\",<script> with JSDoc,Medium,https://svelte.dev/docs/typescript",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 50,
+          "content": "49,TypeScript,\"Use lang=\"\"ts\"\" in script\",TypeScript support,\"<script lang=\"\"ts\"\">\",JavaScript for typed projects,\"<script lang=\"\"ts\"\">\",<script> with JSDoc,Medium,https://svelte.dev/docs/typescript",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 26,
+          "content": "25,Slots,Use slots for composition,Content projection,<slot> for flexible content,Props for all content,<slot>Default</slot>,\"<Component content=\"\"text\"\"/>\",Medium,https://svelte.dev/docs/special-elem",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\data\\stacks\\vue.csv",
+      "score": 35,
+      "classification": "SUSPICIOUS",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 2,
+          "content": "1,Composition,Use Composition API for new projects,Composition API offers better TypeScript support and logic reuse,<script setup> for components,Options API for new projects,<script setup>,export def",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 2,
+          "content": "1,Composition,Use Composition API for new projects,Composition API offers better TypeScript support and logic reuse,<script setup> for components,Options API for new projects,<script setup>,export def",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 3,
+          "content": "2,Composition,Use script setup syntax,Cleaner syntax with automatic exports,<script setup> with defineProps,setup() function manually,<script setup>,<script> setup() { return {} },Low,https://vuejs.or",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 3,
+          "content": "2,Composition,Use script setup syntax,Cleaner syntax with automatic exports,<script setup> with defineProps,setup() function manually,<script setup>,<script> setup() { return {} },Low,https://vuejs.or",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 3,
+          "content": "2,Composition,Use script setup syntax,Cleaner syntax with automatic exports,<script setup> with defineProps,setup() function manually,<script setup>,<script> setup() { return {} },Low,https://vuejs.or",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 40,
+          "content": "39,TypeScript,Use generic components,Type-safe reusable components,Generic with defineComponent,Any types in components,\"<script setup lang=\"\"ts\"\" generic=\"\"T\"\">\",<script setup> without types,Medium,h",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        },
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 40,
+          "content": "39,TypeScript,Use generic components,Type-safe reusable components,Generic with defineComponent,Any types in components,\"<script setup lang=\"\"ts\"\" generic=\"\"T\"\">\",<script setup> without types,Medium,h",
+          "pattern_matched": "html_script",
+          "description": "Script tag detected"
+        }
+      ]
+    },
+    {
+      "file": "src\\ui-ux-pro-max\\scripts\\design_system.py",
+      "score": 10,
+      "classification": "SAFE",
+      "detections": [
+        {
+          "type": "direct_pattern",
+          "severity": "medium",
+          "score": 5,
+          "line": 25,
+          "content": "REASONING_FILE = \"ui-reasoning.csv\"",
+          "pattern_matched": "html_event_handler",
+          "description": "Inline event handler detected"
+        },
+        {
+          "type": "steganographic",
+          "severity": "medium",
+          "score": 5,
+          "line": 1,
+          "content": "First words of paragraphs: '#!/usr/bin/env Usage: # import # SEARCH_CONFIG # def def def def # # # return def if # return def if # # scored.sort(key=lambda def def # # # best_style # return # def def # # lines.append(\"+\" # # # #'",
+          "pattern_matched": "first_word_hidden_message",
+          "description": "Hidden message in first words of paragraphs, contains: 'system'"
+        }
+      ]
+    }
+  ]
+}
