@@ -25,7 +25,7 @@ Scans local directories or GitHub repos for malicious patterns, steganographic h
 ## Quick Start
 
 ```bash
-pip install colorama
+pip install -r requirements.txt
 ```
 
 ```bash
