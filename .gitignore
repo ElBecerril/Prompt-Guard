@@ -22,6 +22,9 @@ env/
 *.swp
 *.swo
 
+# Claude Code
+.claude/
+
 # OS
 Thumbs.db
 Desktop.ini
