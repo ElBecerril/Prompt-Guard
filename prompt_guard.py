@@ -608,13 +608,17 @@ def build_report(source: str, results: list[dict]) -> dict:
 
 def print_banner():
     """Print the tool banner."""
-    border = "=" * 52
-    print()
-    print(f"{Fore.CYAN}{Style.BRIGHT}{border}")
-    print(f"  PROMPT GUARD - Injection Scanner")
-    print(f"  First line of defense against")
-    print(f"  prompt injection attacks")
-    print(f"{border}{Style.RESET_ALL}")
+    ascii_art = r"""
+  ____                            _      ____                     _
+ |  _ \ _ __ ___  _ __ ___  _ __ | |_   / ___|_   _  __ _ _ __ __| |
+ | |_) | '__/ _ \| '_ ` _ \| '_ \| __| | |  _| | | |/ _` | '__/ _` |
+ |  __/| | | (_) | | | | | | |_) | |_  | |_| | |_| | (_| | | | (_| |
+ |_|   |_|  \___/|_| |_| |_| .__/ \__|  \____|\__,_|\__,_|_|  \__,_|
+                             |_|
+"""
+    print(f"{Fore.CYAN}{Style.BRIGHT}{ascii_art}{Style.RESET_ALL}")
+    print(f"  {Style.BRIGHT}First line of defense against prompt injection attacks{Style.RESET_ALL}")
+    print(f"  {Fore.WHITE}by EL_Bcerril{Style.RESET_ALL}")
     print()
 
 
