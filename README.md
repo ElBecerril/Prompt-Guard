@@ -28,13 +28,41 @@ Scans local directories or GitHub repos for malicious patterns, steganographic h
 pip install -r requirements.txt
 ```
 
+### Interactive Mode (recommended for beginners)
+
+Just run without arguments — or double-click the `.exe`:
+
+```bash
+python prompt_guard.py
+```
+
+You'll see a menu where you can:
+1. **Scan a folder or GitHub repo** — paste a local path or URL
+2. **Analyze a text/prompt** — paste suspicious text directly to check it
+
+### CLI Mode (advanced)
+
 ```bash
 # Scan a local folder
 python prompt_guard.py ./my-repo
 
 # Scan a GitHub repo
 python prompt_guard.py https://github.com/user/repo
+
+# With options
+python prompt_guard.py ./my-repo --output report.json --verbose
 ```
+
+## Standalone Executable (.exe)
+
+Build a portable executable that works without Python installed:
+
+```bash
+pip install pyinstaller
+python build.py
+```
+
+The generated `dist/PromptGuard.exe` can be distributed and run with a double-click.
 
 ## What it detects
 
@@ -70,7 +98,16 @@ python prompt_guard.py <source> [options]
   -v, --verbose          Show all files, not just flagged ones
   -e, --extensions LIST  Comma-separated extensions to scan
   -m, --max-size MB      Max file size in MB (default: 1.0)
+  -x, --exclude LIST     Comma-separated files/dirs to exclude
 ```
+
+### Default extensions
+
+`.md` `.txt` `.json` `.yaml` `.yml` `.py` `.html` `.htm` `.xml` `.csv` `.rst` `.toml` `.ini` `.cfg` `.conf` `.js` `.ts` `.jsx` `.tsx` `.sh` `.bat` `.ps1`
+
+### Skipped directories
+
+`.git` `node_modules` `__pycache__` `.venv` `venv` `.tox` `.mypy_cache` `.pytest_cache` `dist` `build`
 
 ## CI/CD Integration
 
@@ -87,13 +124,19 @@ python prompt_guard.py ./repo && echo "PASS" || echo "ALERT"
 ## Example Output
 
 ```
-====================================================
-  PROMPT GUARD - Injection Scanner
-  First line of defense against
-  prompt injection attacks
-====================================================
+  ____                            _      ____                     _
+ |  _ \ _ __ ___  _ __ ___  _ __ | |_   / ___|_   _  __ _ _ __ __| |
+ | |_) | '__/ _ \| '_ ` _ \| '_ \| __| | |  _| | | |/ _` | '__/ _` |
+ |  __/| | | (_) | | | | | | |_) | |_  | |_| | |_| | (_| | | | (_| |
+ |_|   |_|  \___/|_| |_| |_| .__/ \__|  \____|\__,_|\__,_|_|  \__,_|
+                             |_|
+
+  First line of defense against prompt injection attacks
+  by EL_Bcerril
 
 Scanning: ./my-repo
+Extensions: .json, .md, .py, .txt, .yaml, .yml
+Max file size: 1.0MB
 Files found: 12
 
 ============================================================
@@ -114,12 +157,31 @@ Files found: 12
 Report saved to: report.json
 ```
 
-## Notes
+## Architecture
 
-- Analyzes **text content** only. Does not execute code.
-- GitHub repos are shallow-cloned to a temp directory and cleaned up after scanning.
+The scanner is organized in 5 internal modules within a single file:
+
+| Module | Responsibility |
+|---|---|
+| **Direct Pattern Scanner** | Regex-based detection across 4 severity tiers |
+| **Steganographic Analysis** | Acrostics, diagonals, base64, zero-width chars, homoglyphs, hidden comments |
+| **Input Sources** | Local directory traversal and GitHub shallow clone |
+| **Scoring & Reporting** | 0-100 scoring, classification, JSON report generation |
+| **CLI & Interactive** | Argument parsing, interactive menu, colored output |
+
+## Running Tests
+
+```bash
+pip install -r requirements.txt
+python -m pytest tests/ -v
+```
+
+## Known Limitations
+
 - Scanning `prompt_guard.py` itself will produce false positives (expected -- it contains the pattern definitions).
-- This is a **first line of defense**. Human review of findings is recommended.
+- Patterns like `subprocess` and `eval()` may flag legitimate code. Always review findings manually.
+- No parallel file scanning yet. Large repos are scanned sequentially.
+- This is a **first line of defense**. It analyzes text content only and does not execute code. Human review of findings is always recommended.
 
 ## License
 

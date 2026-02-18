@@ -31,7 +31,6 @@ except ImportError:
 
 PATTERNS = {
     "critical": {
-        "score": 10,
         "patterns": [
             # Exfiltration
             (r"(?:env[ií]a|manda|send|forward)\s+(?:credenciales|contrase[ñn]as|tokens?|api[_\s]?keys?|secrets?|passwords?)\s+(?:a|to)\b",
@@ -67,7 +66,6 @@ PATTERNS = {
         ]
     },
     "high": {
-        "score_range": (7, 9),
         "patterns": [
             # Jailbreak
             (r"\bDAN\s+mode\b", "jailbreak_dan", "DAN mode jailbreak attempt"),
@@ -109,7 +107,6 @@ PATTERNS = {
         ]
     },
     "medium": {
-        "score_range": (4, 6),
         "patterns": [
             # Subtle manipulation
             (r"en\s+realidad\s+tu\s+prop[oó]sito\s+es", "manipulation_real_purpose_es",
@@ -133,7 +130,6 @@ PATTERNS = {
         ]
     },
     "low": {
-        "score_range": (1, 3),
         "patterns": [
             (r"no\s+le\s+digas\s+al\s+usuario", "secrecy_dont_tell_es",
              "Secrecy indicator: don't tell the user (Spanish)"),
@@ -167,6 +163,10 @@ DEFAULT_EXTENSIONS = {
     ".xml", ".csv", ".rst", ".toml", ".ini", ".cfg", ".conf",
     ".js", ".ts", ".jsx", ".tsx", ".sh", ".bat", ".ps1",
 }
+
+# Pre-compile auxiliary patterns once at module load
+B64_PATTERN = re.compile(r"(?<![A-Za-z0-9+/])([A-Za-z0-9+/]{20,}={0,2})(?![A-Za-z0-9+/])")
+COMMENT_PATTERN = re.compile(r"#\s*(.+)")
 
 # Pre-compile all regex patterns once at module load
 COMPILED_PATTERNS = {}
@@ -328,10 +328,9 @@ def detect_diagonal_pattern(lines: list[str]) -> list[dict]:
 def detect_hidden_base64(content: str) -> list[dict]:
     """Find base64-encoded strings and check decoded content for danger."""
     findings = []
-    b64_pattern = re.compile(r"(?<![A-Za-z0-9+/])([A-Za-z0-9+/]{20,}={0,2})(?![A-Za-z0-9+/])")
     lines = content.split("\n")
     for line_num, line in enumerate(lines, 1):
-        for m in b64_pattern.finditer(line):
+        for m in B64_PATTERN.finditer(line):
             candidate = m.group(1)
             try:
                 decoded = base64.b64decode(candidate).decode("utf-8", errors="ignore")
@@ -350,23 +349,20 @@ def detect_hidden_base64(content: str) -> list[dict]:
                                        f"containing: '{match}'",
                     })
                 # Also run direct patterns against decoded content
-                for sev, cat in PATTERNS.items():
-                    for pat_re, pat_name, desc in cat["patterns"]:
-                        try:
-                            if re.search(pat_re, decoded, re.IGNORECASE):
-                                findings.append({
-                                    "type": "encoding",
-                                    "severity": sev,
-                                    "score": SEVERITY_SCORES[sev],
-                                    "line": line_num,
-                                    "content": f"Base64: '{candidate[:80]}' "
-                                               f"-> '{decoded[:120]}'",
-                                    "pattern_matched": f"base64_{pat_name}",
-                                    "description": f"Base64-encoded content matches "
-                                                   f"pattern: {desc}",
-                                })
-                        except re.error:
-                            continue
+                for sev, compiled_list in COMPILED_PATTERNS.items():
+                    for entry in compiled_list:
+                        if entry["regex"].search(decoded):
+                            findings.append({
+                                "type": "encoding",
+                                "severity": sev,
+                                "score": entry["score"],
+                                "line": line_num,
+                                "content": f"Base64: '{candidate[:80]}' "
+                                           f"-> '{decoded[:120]}'",
+                                "pattern_matched": f"base64_{entry['name']}",
+                                "description": f"Base64-encoded content matches "
+                                               f"pattern: {entry['desc']}",
+                            })
             except Exception:
                 continue
     return findings
@@ -431,48 +427,41 @@ def detect_hidden_comments(content: str, filepath: str) -> list[dict]:
         html_comments = re.finditer(r"<!--(.*?)-->", content, re.DOTALL)
         for m in html_comments:
             comment_text = m.group(1)
-            for sev, cat in PATTERNS.items():
-                for pat_re, pat_name, desc in cat["patterns"]:
-                    try:
-                        if re.search(pat_re, comment_text, re.IGNORECASE):
-                            line_num = content[:m.start()].count("\n") + 1
-                            findings.append({
-                                "type": "steganographic",
-                                "severity": sev,
-                                "score": SEVERITY_SCORES[sev],
-                                "line": line_num,
-                                "content": f"Hidden comment: "
-                                           f"'{comment_text.strip()[:150]}'",
-                                "pattern_matched": f"hidden_comment_{pat_name}",
-                                "description": f"Injection pattern found inside "
-                                               f"HTML/Markdown comment: {desc}",
-                            })
-                    except re.error:
-                        continue
+            for sev, compiled_list in COMPILED_PATTERNS.items():
+                for entry in compiled_list:
+                    if entry["regex"].search(comment_text):
+                        line_num = content[:m.start()].count("\n") + 1
+                        findings.append({
+                            "type": "steganographic",
+                            "severity": sev,
+                            "score": entry["score"],
+                            "line": line_num,
+                            "content": f"Hidden comment: "
+                                       f"'{comment_text.strip()[:150]}'",
+                            "pattern_matched": f"hidden_comment_{entry['name']}",
+                            "description": f"Injection pattern found inside "
+                                           f"HTML/Markdown comment: {entry['desc']}",
+                        })
 
     # Python/Shell comments
     if ext in (".py", ".sh", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf"):
-        comment_re = re.compile(r"#\s*(.+)")
         lines = content.split("\n")
         for line_num, line in enumerate(lines, 1):
-            for cm in comment_re.finditer(line):
+            for cm in COMMENT_PATTERN.finditer(line):
                 comment_text = cm.group(1)
-                for sev, cat in PATTERNS.items():
-                    for pat_re, pat_name, desc in cat["patterns"]:
-                        try:
-                            if re.search(pat_re, comment_text, re.IGNORECASE):
-                                findings.append({
-                                    "type": "steganographic",
-                                    "severity": sev,
-                                    "score": SEVERITY_SCORES[sev],
-                                    "line": line_num,
-                                    "content": f"Comment: '{comment_text.strip()[:150]}'",
-                                    "pattern_matched": f"hidden_comment_{pat_name}",
-                                    "description": f"Injection pattern inside "
-                                                   f"code comment: {desc}",
-                                })
-                        except re.error:
-                            continue
+                for sev, compiled_list in COMPILED_PATTERNS.items():
+                    for entry in compiled_list:
+                        if entry["regex"].search(comment_text):
+                            findings.append({
+                                "type": "steganographic",
+                                "severity": sev,
+                                "score": entry["score"],
+                                "line": line_num,
+                                "content": f"Comment: '{comment_text.strip()[:150]}'",
+                                "pattern_matched": f"hidden_comment_{entry['name']}",
+                                "description": f"Injection pattern inside "
+                                               f"code comment: {entry['desc']}",
+                            })
 
     return findings
 
@@ -500,7 +489,8 @@ def scan_steganographic(content: str, filepath: str) -> list[dict]:
 # Module 3: Input Sources
 # ---------------------------------------------------------------------------
 
-def get_files_local(directory: str, extensions: set[str]) -> list[Path]:
+def get_files_local(directory: str, extensions: set[str],
+                    exclude: set[str] | None = None) -> list[Path]:
     """Recursively get files from a local directory filtered by extension."""
     root = Path(directory).resolve()
     if not root.is_dir():
@@ -510,8 +500,13 @@ def get_files_local(directory: str, extensions: set[str]) -> list[Path]:
     files = []
     skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv",
                  ".tox", ".mypy_cache", ".pytest_cache", "dist", "build"}
+    if exclude:
+        skip_dirs |= exclude
     for path in root.rglob("*"):
         if any(part in skip_dirs for part in path.parts):
+            continue
+        rel = str(path.relative_to(root))
+        if exclude and any(rel == e or rel.replace("\\", "/") == e for e in exclude):
             continue
         if path.is_file() and path.suffix.lower() in extensions:
             files.append(path)
@@ -678,6 +673,62 @@ def print_results(results: list[dict], verbose: bool = False):
     print(f"{Style.BRIGHT}{'-' * 60}{Style.RESET_ALL}\n")
 
 
+def scan_text(text: str) -> tuple[list[dict], int]:
+    """Scan raw text (not a file) against direct and steganographic patterns.
+
+    Returns a tuple of (detections, score).
+    """
+    detections = []
+    detections.extend(scan_direct_patterns(text, "<text>"))
+    detections.extend(scan_steganographic(text, "<text>"))
+    score = compute_file_score(detections)
+    return detections, score
+
+
+def print_text_results(detections: list[dict], score: int):
+    """Print analysis results for pasted text with colors."""
+    classification = classify_score(score)
+    color = classify_color(classification)
+
+    print(f"\n{Style.BRIGHT}{'=' * 60}{Style.RESET_ALL}")
+    print(f"{Style.BRIGHT} TEXT ANALYSIS RESULTS{Style.RESET_ALL}")
+    print(f"{Style.BRIGHT}{'=' * 60}{Style.RESET_ALL}\n")
+
+    print(f"  Classification: {color}{classification}{Style.RESET_ALL}  "
+          f"[score {score}]")
+
+    if not detections:
+        print(f"\n  {Fore.GREEN}No threats detected in the provided text."
+              f"{Style.RESET_ALL}\n")
+        return
+
+    print()
+    for d in detections:
+        sev_color = classify_color(
+            "CRITICAL" if d["severity"] == "critical"
+            else "DANGEROUS" if d["severity"] == "high"
+            else "SUSPICIOUS" if d["severity"] == "medium"
+            else "SAFE"
+        )
+        print(f"    {sev_color}L{d['line']:<5d} [{d['severity'].upper():8s}] "
+              f"{d['description']}{Style.RESET_ALL}")
+        print(f"           {Fore.WHITE}{d['content'][:120]}{Style.RESET_ALL}")
+    print()
+
+    summary = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    for d in detections:
+        if d["severity"] in summary:
+            summary[d["severity"]] += 1
+
+    print(f"{Style.BRIGHT}{'-' * 60}{Style.RESET_ALL}")
+    print(f"  Detections:  "
+          f"{Fore.RED + Style.BRIGHT}{summary['critical']} critical{Style.RESET_ALL}, "
+          f"{Fore.RED}{summary['high']} high{Style.RESET_ALL}, "
+          f"{Fore.YELLOW}{summary['medium']} medium{Style.RESET_ALL}, "
+          f"{Fore.GREEN}{summary['low']} low{Style.RESET_ALL}")
+    print(f"{Style.BRIGHT}{'-' * 60}{Style.RESET_ALL}\n")
+
+
 def scan_file(filepath: Path, base_dir: Path, max_size: int = DEFAULT_MAX_FILE_SIZE) -> dict:
     """Scan a single file and return results."""
     rel_path = str(filepath.relative_to(base_dir))
@@ -738,7 +789,116 @@ def scan_file(filepath: Path, base_dir: Path, max_size: int = DEFAULT_MAX_FILE_S
     }
 
 
+def _interactive_scan_folder():
+    """Handle the 'scan folder/repo' option in interactive mode."""
+    raw = input(f"\n  {Fore.CYAN}Pega la ruta de la carpeta o URL de GitHub: "
+                f"{Style.RESET_ALL}").strip()
+    source = raw.strip("\"'")
+    if not source:
+        print(f"{Fore.YELLOW}  No se proporcion\u00f3 ninguna ruta.{Style.RESET_ALL}")
+        return
+
+    temp_dir = None
+    if is_github_url(source):
+        temp_dir = clone_github_repo(source)
+        scan_dir = temp_dir
+    else:
+        scan_dir = source
+
+    base_dir = Path(scan_dir).resolve()
+    if not base_dir.is_dir():
+        print(f"{Fore.RED}  Error: '{source}' no es un directorio v\u00e1lido."
+              f"{Style.RESET_ALL}")
+        return
+
+    extensions = DEFAULT_EXTENSIONS
+    print(f"\n{Fore.CYAN}  Scanning: {source}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}  Extensions: {', '.join(sorted(extensions))}{Style.RESET_ALL}")
+    files = get_files_local(scan_dir, extensions)
+    print(f"{Fore.CYAN}  Files found: {len(files)}{Style.RESET_ALL}\n")
+
+    if not files:
+        print(f"{Fore.YELLOW}  No files matched the given extensions.{Style.RESET_ALL}")
+        if temp_dir:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        return
+
+    results = []
+    for i, fpath in enumerate(files, 1):
+        print(f"\r  Scanning [{i}/{len(files)}] {fpath.name[:40]:<40s}",
+              end="", flush=True)
+        results.append(scan_file(fpath, base_dir))
+    print("\r" + " " * 80 + "\r", end="")
+
+    print_results(results)
+
+    report = build_report(source, results)
+    report_path = Path("report.json")
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
+                           encoding="utf-8")
+    print(f"{Fore.GREEN}  Report saved to: {report_path.resolve()}{Style.RESET_ALL}\n")
+
+    if temp_dir:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _interactive_analyze_text():
+    """Handle the 'analyze pasted text' option in interactive mode."""
+    print(f"\n  {Fore.CYAN}Pega el texto a analizar "
+          f"(escribe FIN en una linea aparte para terminar):{Style.RESET_ALL}")
+    lines = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line.strip() == "FIN":
+            break
+        lines.append(line)
+
+    text = "\n".join(lines)
+    if not text.strip():
+        print(f"{Fore.YELLOW}  No se proporcion\u00f3 ning\u00fan texto.{Style.RESET_ALL}")
+        return
+
+    detections, score = scan_text(text)
+    print_text_results(detections, score)
+
+
+def interactive_mode():
+    """Interactive menu mode for non-technical users (no CLI args)."""
+    print_banner()
+
+    while True:
+        print(f"  {Style.BRIGHT}\u00bfQu\u00e9 deseas hacer?{Style.RESET_ALL}")
+        print(f"  {Fore.CYAN}[1]{Style.RESET_ALL} Escanear una carpeta o repo de GitHub")
+        print(f"  {Fore.CYAN}[2]{Style.RESET_ALL} Analizar un texto/prompt pegado")
+        print(f"  {Fore.CYAN}[0]{Style.RESET_ALL} Salir")
+        print()
+        choice = input(f"  {Style.BRIGHT}> {Style.RESET_ALL}").strip()
+
+        if choice == "1":
+            _interactive_scan_folder()
+        elif choice == "2":
+            _interactive_analyze_text()
+        elif choice == "0":
+            print(f"\n  {Fore.GREEN}Hasta luego!{Style.RESET_ALL}\n")
+            break
+        else:
+            print(f"\n  {Fore.YELLOW}Opci\u00f3n no v\u00e1lida. "
+                  f"Elige 1, 2 o 0.{Style.RESET_ALL}\n")
+
+    input("  Presiona Enter para salir...")
+
+
 def main():
+    # No arguments -> interactive mode
+    if len(sys.argv) == 1:
+        interactive_mode()
+        return
+
     parser = argparse.ArgumentParser(
         description="Prompt Injection Scanner -- detect malicious prompt "
                     "injection patterns in text files.",
@@ -764,6 +924,9 @@ Examples:
     parser.add_argument("--max-size", "-m", type=float, default=1.0,
                         help="Max file size in MB to scan (default: 1.0). "
                              "Files exceeding this limit are skipped.")
+    parser.add_argument("--exclude", "-x", default=None,
+                        help="Comma-separated list of files or directories to "
+                             "exclude (e.g. docs,setup.py,tests)")
 
     args = parser.parse_args()
     print_banner()
@@ -780,6 +943,11 @@ Examples:
     else:
         extensions = DEFAULT_EXTENSIONS
 
+    # Parse exclude list
+    exclude = None
+    if args.exclude:
+        exclude = {e.strip() for e in args.exclude.split(",") if e.strip()}
+
     # Resolve source
     temp_dir = None
     if is_github_url(args.source):
@@ -794,7 +962,7 @@ Examples:
     print(f"{Fore.CYAN}Scanning: {args.source}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}Extensions: {', '.join(sorted(extensions))}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}Max file size: {args.max_size:.1f}MB{Style.RESET_ALL}")
-    files = get_files_local(scan_dir, extensions)
+    files = get_files_local(scan_dir, extensions, exclude)
     print(f"{Fore.CYAN}Files found: {len(files)}{Style.RESET_ALL}\n")
 
     if not files:
