@@ -542,7 +542,7 @@ def is_github_url(source: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def classify_score(score: int) -> str:
-    """Classify a file score into a risk level."""
+    """Classify a cumulative file score into a risk level (band only)."""
     if score <= 10:
         return "SAFE"
     if score <= 40:
@@ -550,6 +550,31 @@ def classify_score(score: int) -> str:
     if score <= 70:
         return "DANGEROUS"
     return "CRITICAL"
+
+
+# Minimum classification implied by the single most severe detection. Without
+# this, a lone critical finding (score 10) or high finding (score 8) would fall
+# in the score band "SAFE" and be shown in green -- the score model sums
+# severities, so one grave finding scores lower than several trivial ones.
+SEVERITY_FLOOR = {
+    "critical": "DANGEROUS",
+    "high": "SUSPICIOUS",
+    "medium": "SUSPICIOUS",
+    "low": "SAFE",
+}
+
+_CLASS_RANK = {"SAFE": 0, "SUSPICIOUS": 1, "DANGEROUS": 2, "CRITICAL": 3}
+
+
+def classify(score: int, detections: list[dict]) -> str:
+    """Classify a file combining its cumulative score with a floor set by the
+    single most severe detection, so a lone high/critical is never SAFE."""
+    result = classify_score(score)
+    for d in detections:
+        floor = SEVERITY_FLOOR.get(d.get("severity"), "SAFE")
+        if _CLASS_RANK[floor] > _CLASS_RANK[result]:
+            result = floor
+    return result
 
 
 def classify_color(classification: str) -> str:
@@ -687,7 +712,7 @@ def scan_text(text: str) -> tuple[list[dict], int]:
 
 def print_text_results(detections: list[dict], score: int):
     """Print analysis results for pasted text with colors."""
-    classification = classify_score(score)
+    classification = classify(score, detections)
     color = classify_color(classification)
 
     print(f"\n{Style.BRIGHT}{'=' * 60}{Style.RESET_ALL}")
@@ -779,7 +804,7 @@ def scan_file(filepath: Path, base_dir: Path, max_size: int = DEFAULT_MAX_FILE_S
     detections.extend(scan_steganographic(content, rel_path))
 
     score = compute_file_score(detections)
-    classification = classify_score(score)
+    classification = classify(score, detections)
 
     return {
         "file": rel_path,
@@ -812,36 +837,35 @@ def _interactive_scan_folder():
         return
 
     extensions = DEFAULT_EXTENSIONS
-    print(f"\n{Fore.CYAN}  Scanning: {source}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}  Extensions: {', '.join(sorted(extensions))}{Style.RESET_ALL}")
-    files = get_files_local(scan_dir, extensions)
-    print(f"{Fore.CYAN}  Files found: {len(files)}{Style.RESET_ALL}\n")
+    try:
+        print(f"\n{Fore.CYAN}  Scanning: {source}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}  Extensions: {', '.join(sorted(extensions))}{Style.RESET_ALL}")
+        files = get_files_local(scan_dir, extensions)
+        print(f"{Fore.CYAN}  Files found: {len(files)}{Style.RESET_ALL}\n")
 
-    if not files:
-        print(f"{Fore.YELLOW}  No files matched the given extensions.{Style.RESET_ALL}")
+        if not files:
+            print(f"{Fore.YELLOW}  No files matched the given extensions.{Style.RESET_ALL}")
+            return
+
+        results = []
+        for i, fpath in enumerate(files, 1):
+            print(f"\r  Scanning [{i}/{len(files)}] {fpath.name[:40]:<40s}",
+                  end="", flush=True)
+            results.append(scan_file(fpath, base_dir))
+        print("\r" + " " * 80 + "\r", end="")
+
+        print_results(results)
+
+        report = build_report(source, results)
+        report_path = Path("report.json")
+        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
+                               encoding="utf-8")
+        print(f"{Fore.GREEN}  Report saved to: {report_path.resolve()}{Style.RESET_ALL}\n")
+    finally:
+        # Cleanup temp dir, even if scanning raised or returned early
         if temp_dir:
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
-        return
-
-    results = []
-    for i, fpath in enumerate(files, 1):
-        print(f"\r  Scanning [{i}/{len(files)}] {fpath.name[:40]:<40s}",
-              end="", flush=True)
-        results.append(scan_file(fpath, base_dir))
-    print("\r" + " " * 80 + "\r", end="")
-
-    print_results(results)
-
-    report = build_report(source, results)
-    report_path = Path("report.json")
-    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
-                           encoding="utf-8")
-    print(f"{Fore.GREEN}  Report saved to: {report_path.resolve()}{Style.RESET_ALL}\n")
-
-    if temp_dir:
-        import shutil
-        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _interactive_analyze_text():
@@ -958,41 +982,39 @@ Examples:
 
     base_dir = Path(scan_dir).resolve()
 
-    # Collect files
-    print(f"{Fore.CYAN}Scanning: {args.source}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}Extensions: {', '.join(sorted(extensions))}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}Max file size: {args.max_size:.1f}MB{Style.RESET_ALL}")
-    files = get_files_local(scan_dir, extensions, exclude)
-    print(f"{Fore.CYAN}Files found: {len(files)}{Style.RESET_ALL}\n")
+    try:
+        # Collect files
+        print(f"{Fore.CYAN}Scanning: {args.source}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}Extensions: {', '.join(sorted(extensions))}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}Max file size: {args.max_size:.1f}MB{Style.RESET_ALL}")
+        files = get_files_local(scan_dir, extensions, exclude)
+        print(f"{Fore.CYAN}Files found: {len(files)}{Style.RESET_ALL}\n")
 
-    if not files:
-        print(f"{Fore.YELLOW}No files matched the given extensions.{Style.RESET_ALL}")
-        sys.exit(0)
+        if not files:
+            print(f"{Fore.YELLOW}No files matched the given extensions.{Style.RESET_ALL}")
+            return
 
-    # Scan each file
-    results = []
-    for i, fpath in enumerate(files, 1):
-        print(f"\r  Scanning [{i}/{len(files)}] {fpath.name[:40]:<40s}", end="", flush=True)
-        results.append(scan_file(fpath, base_dir, max_size))
-    print("\r" + " " * 80 + "\r", end="")
+        # Scan each file
+        results = []
+        for i, fpath in enumerate(files, 1):
+            print(f"\r  Scanning [{i}/{len(files)}] {fpath.name[:40]:<40s}", end="", flush=True)
+            results.append(scan_file(fpath, base_dir, max_size))
+        print("\r" + " " * 80 + "\r", end="")
 
-    # Print results
-    print_results(results, verbose=args.verbose)
+        # Print results
+        print_results(results, verbose=args.verbose)
 
-    # Write report
-    report = build_report(args.source, results)
-    report_path = Path(args.output)
-    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
-                           encoding="utf-8")
-    print(f"{Fore.GREEN}Report saved to: {report_path.resolve()}{Style.RESET_ALL}\n")
-
-    # Cleanup temp dir
-    if temp_dir:
-        import shutil
-        try:
+        # Write report
+        report = build_report(args.source, results)
+        report_path = Path(args.output)
+        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
+                               encoding="utf-8")
+        print(f"{Fore.GREEN}Report saved to: {report_path.resolve()}{Style.RESET_ALL}\n")
+    finally:
+        # Cleanup temp dir, even if scanning raised or returned early
+        if temp_dir:
+            import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception:
-            pass
 
     # Exit code: non-zero if critical/high findings
     if report["summary"]["critical"] > 0 or report["summary"]["high"] > 0:

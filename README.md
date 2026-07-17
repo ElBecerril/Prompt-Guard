@@ -172,7 +172,7 @@ The scanner is organized in 5 internal modules within a single file:
 ## Running Tests
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 ```
 

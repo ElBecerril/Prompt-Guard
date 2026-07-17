@@ -26,6 +26,8 @@ env/
 
 # Claude Code
 .claude/
+CLAUDE.md
+docs/session-context/
 
 # OS
 Thumbs.db
