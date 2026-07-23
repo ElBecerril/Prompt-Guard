@@ -38,6 +38,12 @@ PATTERNS = {
             (r"(?:curl|wget)\s+.*(?:/etc/passwd|/etc/shadow|\.env\b|credentials|\.pem\b|\.key\b|id_rsa)",
              "exfiltration_sensitive_file", "curl/wget targeting sensitive file"),
             (r"POST\s+(?:to\s+)?https?://", "exfiltration_post", "Suspicious POST to external URL"),
+            # Exfiltration via rendered image: the URL carries a placeholder the
+            # model is expected to fill in, so merely rendering it leaks data.
+            (r"!\[[^\]]*\]\(\s*https?://[^)\s]*[?&][^)\s]*(?:\{[^}\s]*\}|\$\{[^}\s]*\}|%s|<[A-Za-z_][\w.\-]*>)",
+             "exfiltration_markdown_image", "Markdown image with templated external URL (data exfiltration)"),
+            (r"<img\b[^>]*\bsrc\s*=\s*[\"']?https?://[^\"'>\s]*[?&][^\"'>\s]*(?:\{[^}\s]*\}|\$\{[^}\s]*\}|%s)",
+             "exfiltration_img_tag", "HTML img tag with templated external URL (data exfiltration)"),
             (r"forward\s+(?:all\s+)?data\s+to\b", "exfiltration_forward", "Attempt to forward data externally"),
             # System override
             (r"(?:olvida|ignora)\s+(?:tus|todas?\s+(?:las\s+)?(?:tus)?)\s+(?:instrucciones|[oó]rdenes|reglas)",
@@ -95,6 +101,18 @@ PATTERNS = {
              "exfiltration_curl_data", "curl with data exfiltration flags"),
             (r"\bwget\s+.*--post-(?:data|file)",
              "exfiltration_wget_post", "wget with POST data flags"),
+            # Image URL whose query string names a data-carrying parameter
+            (r"(?:!\[[^\]]*\]\(\s*|<img\b[^>]*\bsrc\s*=\s*[\"']?)https?://[^)\"'>\s]*[?&](?:data|payload|content|text|msg|message|prompt|token|key|secret|creds?|info)=",
+             "exfiltration_image_query", "Image URL with data-carrying query parameter"),
+            # Tool / function calling injection
+            (r"(?:always|first|immediately|before\s+(?:responding|answering|replying))[,:]?\s+(?:you\s+(?:must|should)\s+)?(?:call|invoke|execute|run|use)\s+(?:the\s+)?[\w.\-]*\s*(?:tool|function|api\s+call)\b",
+             "tool_injection_forced_call", "Instruction forcing an unconditional tool/function call"),
+            (r"(?:call|invoke|use)\s+(?:the\s+)?[\w.\-]+\s+(?:tool|function)\s+with\b",
+             "tool_injection_call_with_args", "Instruction to call a named tool with supplied arguments"),
+            (r"(?:llama|invoca|ejecuta|usa)\s+(?:a\s+)?(?:la\s+)?(?:herramienta|funci[oó]n)\b",
+             "tool_injection_call_es", "Instruction to call a tool/function (Spanish)"),
+            (r"<(?:function_calls\b|invoke\s+name\s*=|tool_call\b)",
+             "tool_injection_fake_markup", "Fake tool-call markup embedded in content"),
             # Execution
             (r"ejecuta\s+(?:este\s+)?c[oó]digo", "execution_code_es",
              "Code execution attempt (Spanish)"),
@@ -127,6 +145,9 @@ PATTERNS = {
              "JavaScript URI link detected"),
             (r"on\w+\s*=\s*[\"']", "html_event_handler",
              "Inline event handler detected"),
+            # Fake conversation turns smuggled into structured data
+            (r"[\"']role[\"']\s*:\s*[\"'](?:system|tool|function)[\"']",
+             "tool_injection_fake_role", "Fake conversation role injected in structured data"),
         ]
     },
     "low": {
@@ -238,6 +259,32 @@ GREEK_HOMOGLYPHS = {
     "\u0399": "I", "\u039a": "K", "\u039c": "M", "\u039d": "N",
     "\u039f": "O", "\u03a1": "P", "\u03a4": "T", "\u03a7": "X",
     "\u03b1": "a", "\u03bf": "o",
+}
+
+# Unicode Tags block (U+E0000-U+E007F): invisible codepoints that mirror ASCII
+# 0x00-0x7F. Used for "ASCII smuggling" -- an entire prompt can be hidden in
+# text that renders as nothing at all.
+UNICODE_TAG_START = 0xE0000
+UNICODE_TAG_END = 0xE007F
+UNICODE_TAG_LANGUAGE = 0xE0001  # LANGUAGE TAG (deprecated)
+UNICODE_TAG_CANCEL = 0xE007F    # CANCEL TAG
+
+# Bidirectional control characters. The override/embedding/isolate family
+# reorders how text renders without changing what a parser reads (Trojan
+# Source, CVE-2021-42574). The plain marks are weaker signals.
+BIDI_CONTROL_CHARS = {
+    "\u202a": ("LEFT-TO-RIGHT EMBEDDING", "high"),
+    "\u202b": ("RIGHT-TO-LEFT EMBEDDING", "high"),
+    "\u202c": ("POP DIRECTIONAL FORMATTING", "high"),
+    "\u202d": ("LEFT-TO-RIGHT OVERRIDE", "high"),
+    "\u202e": ("RIGHT-TO-LEFT OVERRIDE", "high"),
+    "\u2066": ("LEFT-TO-RIGHT ISOLATE", "high"),
+    "\u2067": ("RIGHT-TO-LEFT ISOLATE", "high"),
+    "\u2068": ("FIRST STRONG ISOLATE", "high"),
+    "\u2069": ("POP DIRECTIONAL ISOLATE", "high"),
+    "\u200e": ("LEFT-TO-RIGHT MARK", "low"),
+    "\u200f": ("RIGHT-TO-LEFT MARK", "low"),
+    "\u061c": ("ARABIC LETTER MARK", "low"),
 }
 
 
@@ -389,6 +436,88 @@ def detect_zero_width(content: str) -> list[dict]:
     return findings
 
 
+def decode_unicode_tags(text: str) -> str:
+    """Decode Unicode Tag codepoints (U+E0000-U+E007F) back to ASCII."""
+    decoded = []
+    for char in text:
+        cp = ord(char)
+        if UNICODE_TAG_START <= cp <= UNICODE_TAG_END:
+            if cp in (UNICODE_TAG_LANGUAGE, UNICODE_TAG_CANCEL):
+                continue
+            decoded.append(chr(cp - UNICODE_TAG_START))
+    return "".join(decoded)
+
+
+def detect_unicode_tags(content: str) -> list[dict]:
+    """Detect Unicode Tag characters used to smuggle invisible ASCII text."""
+    findings = []
+    lines = content.split("\n")
+    for line_num, line in enumerate(lines, 1):
+        tag_chars = [c for c in line
+                     if UNICODE_TAG_START <= ord(c) <= UNICODE_TAG_END]
+        if not tag_chars:
+            continue
+
+        decoded = decode_unicode_tags(line)
+        phrase = _check_phrase_match(decoded) if decoded else None
+        preview = decoded.strip()[:150] if decoded else ""
+
+        if phrase:
+            description = (f"Invisible Unicode Tag text decodes to a dangerous "
+                           f"phrase ('{phrase}'): '{preview}'")
+        elif preview:
+            description = (f"Invisible Unicode Tag text hidden in file, "
+                           f"decodes to: '{preview}'")
+        else:
+            description = ("Unicode Tag characters found (no printable payload) "
+                           "-- these codepoints have no legitimate use in text")
+
+        findings.append({
+            "type": "encoding",
+            "severity": "critical",
+            "score": SEVERITY_SCORES["critical"],
+            "line": line_num,
+            "content": f"Found {len(tag_chars)}x Unicode Tag char "
+                       f"(U+{ord(tag_chars[0]):05X}...)",
+            "pattern_matched": "unicode_tags_smuggling",
+            "description": description,
+        })
+    return findings
+
+
+def detect_bidi_override(content: str) -> list[dict]:
+    """Detect bidirectional control chars (Trojan Source, CVE-2021-42574)."""
+    findings = []
+    lines = content.split("\n")
+    for line_num, line in enumerate(lines, 1):
+        found = {}
+        for char in line:
+            if char in BIDI_CONTROL_CHARS:
+                found[char] = found.get(char, 0) + 1
+        if not found:
+            continue
+
+        severity = "high" if any(
+            BIDI_CONTROL_CHARS[c][1] == "high" for c in found
+        ) else "low"
+        detail = "; ".join(
+            f"{count}x {BIDI_CONTROL_CHARS[c][0]} (U+{ord(c):04X})"
+            for c, count in found.items()
+        )
+        findings.append({
+            "type": "encoding",
+            "severity": severity,
+            "score": SEVERITY_SCORES[severity],
+            "line": line_num,
+            "content": detail[:200],
+            "pattern_matched": "bidi_control_chars",
+            "description": "Bidirectional control character(s) detected -- text "
+                           "may render differently than it is parsed "
+                           "(Trojan Source style attack)",
+        })
+    return findings
+
+
 def detect_homoglyphs(content: str) -> list[dict]:
     """Detect Unicode homoglyphs (Cyrillic/Greek chars that look Latin)."""
     findings = []
@@ -479,6 +608,8 @@ def scan_steganographic(content: str, filepath: str) -> list[dict]:
     findings.extend(detect_diagonal_pattern(lines))
     findings.extend(detect_hidden_base64(content))
     findings.extend(detect_zero_width(content))
+    findings.extend(detect_unicode_tags(content))
+    findings.extend(detect_bidi_override(content))
     findings.extend(detect_homoglyphs(content))
     findings.extend(detect_hidden_comments(content, filepath))
 
