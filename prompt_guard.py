@@ -15,6 +15,8 @@ import base64
 import subprocess
 import tempfile
 import unicodedata
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -669,6 +671,127 @@ def is_github_url(source: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Module 3b: GitHub profile scanning
+# ---------------------------------------------------------------------------
+#
+# A malicious actor doesn't need a whole repo to attack an AI agent: a single
+# prompt-injection payload hidden in a *profile bio* (via zero-width chars or
+# Unicode Tag smuggling) fires the moment an agent reads that profile -- e.g.
+# while triaging who just followed you. These helpers scan the free-text fields
+# of a GitHub profile, and optionally those of every follower/following.
+
+GITHUB_API = "https://api.github.com"
+
+# Free-text profile fields an attacker controls and an agent is likely to read.
+PROFILE_FIELDS = ("name", "bio", "company", "location", "blog")
+
+
+def _github_api_get(path: str) -> object:
+    """GET a GitHub REST API path and return parsed JSON.
+
+    Uses a token from GITHUB_TOKEN / GH_TOKEN if present (raising the rate
+    limit from 60 to 5000 req/h). Raises RuntimeError with a friendly message
+    on rate limits, missing users, or network errors.
+    """
+    url = path if path.startswith("http") else f"{GITHUB_API}{path}"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "prompt-guard",
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 429):
+            raise RuntimeError(
+                "GitHub API rate limit reached. Set GITHUB_TOKEN to raise it "
+                "(export GITHUB_TOKEN=$(gh auth token))."
+            )
+        if e.code == 404:
+            raise RuntimeError(f"GitHub user or resource not found: {url}")
+        raise RuntimeError(f"GitHub API error {e.code} for {url}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Network error contacting GitHub: {e.reason}")
+
+
+def is_github_user_url(source: str) -> bool:
+    """True if source is a GitHub *profile* URL (github.com/<user>, no repo)."""
+    prefix = "https://github.com/"
+    if not source.startswith(prefix):
+        return False
+    path = source[len(prefix):].strip("/")
+    # A bare username has exactly one path segment and is not a reserved page.
+    return bool(path) and "/" not in path and path.lower() not in _RESERVED_GH_PATHS
+
+
+# github.com/<name> paths that are site pages, not user profiles.
+_RESERVED_GH_PATHS = {
+    "marketplace", "explore", "topics", "trending", "collections",
+    "sponsors", "settings", "notifications", "new", "about", "pricing",
+}
+
+
+def parse_github_user(source: str) -> str:
+    """Extract the username from a github.com/<user> URL."""
+    return source[len("https://github.com/"):].strip("/")
+
+
+def _profile_to_text(profile: dict) -> str:
+    """Concatenate the free-text fields of a profile into one scannable blob."""
+    parts = []
+    for field in PROFILE_FIELDS:
+        value = profile.get(field)
+        if value:
+            parts.append(f"{field}: {value}")
+    return "\n".join(parts)
+
+
+def scan_github_profile(profile: dict) -> dict:
+    """Scan one profile's text fields, returning a result dict shaped exactly
+    like scan_file() output (file/score/classification/detections)."""
+    login = profile.get("login", "?")
+    text = _profile_to_text(profile)
+    detections, score = scan_text(text) if text else ([], 0)
+    return {
+        "file": f"profile:@{login}",
+        "score": score,
+        "classification": classify(score, detections),
+        "detections": detections,
+    }
+
+
+def scan_github_user(user: str, include_followers: bool = False,
+                     include_following: bool = False, limit: int = 100) -> list[dict]:
+    """Fetch a user's profile -- and optionally their followers/following -- and
+    scan every profile's free-text fields for injection / hidden content.
+
+    Returns a list of result dicts compatible with build_report/print_results.
+    """
+    print(f"{Fore.CYAN}Fetching GitHub profile: @{user}...{Style.RESET_ALL}")
+    profiles = [_github_api_get(f"/users/{user}")]
+
+    def _collect(kind: str) -> list[dict]:
+        print(f"{Fore.CYAN}Fetching {kind} of @{user} (up to {limit})..."
+              f"{Style.RESET_ALL}")
+        listing = _github_api_get(f"/users/{user}/{kind}?per_page={min(limit, 100)}")
+        collected = []
+        for entry in listing[:limit]:
+            collected.append(_github_api_get(f"/users/{entry['login']}"))
+        return collected
+
+    if include_followers:
+        profiles.extend(_collect("followers"))
+    if include_following:
+        profiles.extend(_collect("following"))
+
+    return [scan_github_profile(p) for p in profiles]
+
+
+# ---------------------------------------------------------------------------
 # Module 4: Scoring & Reporting
 # ---------------------------------------------------------------------------
 
@@ -1048,6 +1171,23 @@ def interactive_mode():
     input("  Presiona Enter para salir...")
 
 
+def emit_report(source: str, results: list[dict], output: str,
+                verbose: bool = False) -> int:
+    """Print results, write the JSON report, and return a process exit code
+    (2 if any critical/high finding, 1 if any medium, else 0)."""
+    print_results(results, verbose=verbose)
+    report = build_report(source, results)
+    Path(output).write_text(
+        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"{Fore.GREEN}Report saved to: {Path(output).resolve()}{Style.RESET_ALL}\n")
+    summary = report["summary"]
+    if summary["critical"] > 0 or summary["high"] > 0:
+        return 2
+    if summary["medium"] > 0:
+        return 1
+    return 0
+
+
 def main():
     # No arguments -> interactive mode
     if len(sys.argv) == 1:
@@ -1062,13 +1202,25 @@ def main():
 Examples:
   python prompt_guard.py ./my-repo
   python prompt_guard.py https://github.com/user/repo
+  python prompt_guard.py https://github.com/user            # scan a profile bio
+  python prompt_guard.py https://github.com/user --followers  # + their followers
   python prompt_guard.py ./my-repo --output report.json
   python prompt_guard.py ./my-repo --verbose
   python prompt_guard.py ./my-repo --extensions .md,.txt,.json
         """,
     )
     parser.add_argument("source",
-                        help="Local directory path or GitHub repo URL to scan")
+                        help="Local directory, GitHub repo URL, or GitHub "
+                             "profile URL (github.com/<user>) to scan")
+    parser.add_argument("--followers", action="store_true",
+                        help="When source is a profile URL, also scan the "
+                             "free-text fields of each follower's profile")
+    parser.add_argument("--following", action="store_true",
+                        help="When source is a profile URL, also scan the "
+                             "profiles the user follows")
+    parser.add_argument("--limit", type=int, default=100,
+                        help="Max followers/following profiles to scan "
+                             "(default: 100)")
     parser.add_argument("--output", "-o", default="report.json",
                         help="Output report filename (default: report.json)")
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -1103,7 +1255,21 @@ Examples:
     if args.exclude:
         exclude = {e.strip() for e in args.exclude.split(",") if e.strip()}
 
-    # Resolve source
+    # Resolve source. A bare profile URL (github.com/<user>) is checked before
+    # the generic repo-URL branch, since both start with github.com/.
+    if is_github_user_url(args.source):
+        try:
+            results = scan_github_user(
+                parse_github_user(args.source),
+                include_followers=args.followers,
+                include_following=args.following,
+                limit=args.limit,
+            )
+        except RuntimeError as e:
+            print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+            sys.exit(1)
+        sys.exit(emit_report(args.source, results, args.output, args.verbose))
+
     temp_dir = None
     if is_github_url(args.source):
         temp_dir = clone_github_repo(args.source)
@@ -1132,27 +1298,15 @@ Examples:
             results.append(scan_file(fpath, base_dir, max_size))
         print("\r" + " " * 80 + "\r", end="")
 
-        # Print results
-        print_results(results, verbose=args.verbose)
-
-        # Write report
-        report = build_report(args.source, results)
-        report_path = Path(args.output)
-        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
-                               encoding="utf-8")
-        print(f"{Fore.GREEN}Report saved to: {report_path.resolve()}{Style.RESET_ALL}\n")
+        # Print results and write the JSON report.
+        exit_code = emit_report(args.source, results, args.output, args.verbose)
     finally:
         # Cleanup temp dir, even if scanning raised or returned early
         if temp_dir:
             import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    # Exit code: non-zero if critical/high findings
-    if report["summary"]["critical"] > 0 or report["summary"]["high"] > 0:
-        sys.exit(2)
-    if report["summary"]["medium"] > 0:
-        sys.exit(1)
-    sys.exit(0)
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

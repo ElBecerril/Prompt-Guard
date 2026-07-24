@@ -49,9 +49,21 @@ python prompt_guard.py ./my-repo
 # Scan a GitHub repo
 python prompt_guard.py https://github.com/user/repo
 
+# Scan a GitHub profile's free-text fields (bio, name, company, location, blog)
+python prompt_guard.py https://github.com/user
+
+# ...and every follower's profile too (great before an agent triages new followers)
+python prompt_guard.py https://github.com/user --followers --limit 50
+
 # With options
 python prompt_guard.py ./my-repo --output report.json --verbose
 ```
+
+> **Why scan profiles?** A prompt-injection payload doesn't need a repo — a
+> single bio with a hidden Unicode-Tag or zero-width payload fires the moment
+> an AI agent reads that profile (e.g. while summarizing who just followed you).
+> Set `GITHUB_TOKEN` (`export GITHUB_TOKEN=$(gh auth token)`) to raise the API
+> rate limit from 60 to 5000 req/h when scanning many followers.
 
 ## Standalone Executable (.exe)
 
@@ -99,12 +111,15 @@ Each file gets a score from 0 to 100:
 ```
 python prompt_guard.py <source> [options]
 
-  source                 Local path or GitHub URL (required)
+  source                 Local path, GitHub repo URL, or profile URL (required)
   -o, --output FILE      Report filename (default: report.json)
   -v, --verbose          Show all files, not just flagged ones
   -e, --extensions LIST  Comma-separated extensions to scan
   -m, --max-size MB      Max file size in MB (default: 1.0)
   -x, --exclude LIST     Comma-separated files/dirs to exclude
+  --followers            Profile URL only: also scan each follower's profile
+  --following            Profile URL only: also scan profiles the user follows
+  --limit N              Max followers/following profiles to scan (default: 100)
 ```
 
 ### Default extensions
