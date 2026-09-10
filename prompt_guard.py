@@ -12,11 +12,13 @@ import os
 import sys
 import argparse
 import base64
+import codecs
 import subprocess
 import tempfile
 import unicodedata
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote
 
 try:
     from colorama import init, Fore, Style
@@ -69,6 +71,12 @@ PATTERNS = {
              "Attempt to reveal hidden prompt"),
             (r"dame\s+tu\s+configuraci[oó]n\s+interna", "reveal_config_es",
              "Attempt to reveal internal config (Spanish)"),
+            # Fake chat template markup used to break out of the current
+            # context and smuggle in a new "turn" the model may trust.
+            (r"<\|(?:system|user|assistant|im_start|im_end|endoftext)\|>",
+             "fake_chat_template_token", "Fake chat template token embedded in content"),
+            (r"\[(?:INST|/INST|SYS|/SYS)\]",
+             "fake_llama_template", "Fake Llama-style instruction template"),
         ]
     },
     "high": {
@@ -113,6 +121,16 @@ PATTERNS = {
              "tool_injection_call_es", "Instruction to call a tool/function (Spanish)"),
             (r"<(?:function_calls\b|invoke\s+name\s*=|tool_call\b)",
              "tool_injection_fake_markup", "Fake tool-call markup embedded in content"),
+            # Exfiltration via a plain (non-image) Markdown link: not zero-click
+            # like a rendered image, but still leaks data if clicked/followed.
+            (r"(?<!!)\[[^\]]*\]\(\s*https?://[^)\s]*[?&][^)\s]*(?:\{[^}\s]*\}|\$\{[^}\s]*\}|%s)",
+             "exfiltration_markdown_link", "Markdown link with templated external URL"),
+            # Fake role/context markers used to convince the model a new,
+            # untrusted turn is actually part of its trusted context.
+            (r"^\s*(?:SYSTEM|ADMIN|ROOT)\s*:\s*\S", "fake_role_prefix",
+             "Fake system/admin role prefix"),
+            (r"-{2,}\s*(?:END OF (?:DOCUMENT|FILE|CONTEXT|DATA)|NEW INSTRUCTIONS?)\s*-{2,}",
+             "fake_context_boundary", "Fake end-of-document marker followed by new instructions"),
             # Execution
             (r"ejecuta\s+(?:este\s+)?c[oó]digo", "execution_code_es",
              "Code execution attempt (Spanish)"),
@@ -187,6 +205,8 @@ DEFAULT_EXTENSIONS = {
 
 # Pre-compile auxiliary patterns once at module load
 B64_PATTERN = re.compile(r"(?<![A-Za-z0-9+/])([A-Za-z0-9+/]{20,}={0,2})(?![A-Za-z0-9+/])")
+HEX_PATTERN = re.compile(r"(?<![0-9a-fA-F])([0-9a-fA-F]{20,})(?![0-9a-fA-F])")
+URL_ENCODED_PATTERN = re.compile(r"(?:%[0-9a-fA-F]{2}){4,}")
 COMMENT_PATTERN = re.compile(r"#\s*(.+)")
 
 # Pre-compile all regex patterns once at module load
@@ -209,11 +229,13 @@ def scan_direct_patterns(content: str, filepath: str) -> list[dict]:
     """Scan file content against all pre-compiled pattern categories."""
     findings = []
     lines = content.split("\n")
+    raw_matches = set()
 
     for severity, compiled_list in COMPILED_PATTERNS.items():
         for entry in compiled_list:
             for line_num, line in enumerate(lines, 1):
                 for match in entry["regex"].finditer(line):
+                    raw_matches.add((entry["name"], line_num))
                     findings.append({
                         "type": "direct_pattern",
                         "severity": severity,
@@ -223,6 +245,48 @@ def scan_direct_patterns(content: str, filepath: str) -> list[dict]:
                         "pattern_matched": entry["name"],
                         "description": entry["desc"],
                     })
+
+    # Second pass: strip zero-width/Unicode Tag chars and re-run every pattern.
+    # An attacker can defeat a regex like "ignore\s+all" by inserting a
+    # zero-width char inside a keyword ("ign​ore"); only the raw text
+    # fails to match, so only report matches that are NEW once the invisible
+    # chars are gone -- that's the signature of this specific evasion.
+    stripped = strip_invisible_chars(content)
+    if stripped != content:
+        stripped_lines = stripped.split("\n")
+        for severity, compiled_list in COMPILED_PATTERNS.items():
+            for entry in compiled_list:
+                for line_num, line in enumerate(stripped_lines, 1):
+                    if (entry["name"], line_num) in raw_matches:
+                        continue
+                    for match in entry["regex"].finditer(line):
+                        findings.append({
+                            "type": "direct_pattern",
+                            "severity": "critical",
+                            "score": SEVERITY_SCORES["critical"],
+                            "line": line_num,
+                            "content": line.strip()[:200],
+                            "pattern_matched": f"evasion_{entry['name']}",
+                            "description": f"Pattern '{entry['name']}' only matches "
+                                           f"after stripping zero-width/Unicode Tag "
+                                           f"characters -- likely regex evasion "
+                                           f"({entry['desc']})",
+                        })
+    return findings
+
+
+def scan_filename(filepath: Path, rel_path: str) -> list[dict]:
+    """Run pattern detection against the filename itself. Hidden instructions
+    can be smuggled in a file/PR name (e.g. "ignore all previous instructions.md")
+    and never show up in a content-only scan. Reuses scan_direct_patterns so
+    filenames also benefit from the zero-width-evasion second pass."""
+    findings = scan_direct_patterns(filepath.name, rel_path)
+    for f in findings:
+        f["type"] = "filename"
+        f["line"] = 0
+        f["content"] = filepath.name
+        f["pattern_matched"] = f"filename_{f['pattern_matched']}"
+        f["description"] = f"Filename itself matches injection pattern: {f['description']}"
     return findings
 
 
@@ -268,6 +332,20 @@ UNICODE_TAG_START = 0xE0000
 UNICODE_TAG_END = 0xE007F
 UNICODE_TAG_LANGUAGE = 0xE0001  # LANGUAGE TAG (deprecated)
 UNICODE_TAG_CANCEL = 0xE007F    # CANCEL TAG
+
+
+def strip_invisible_chars(content: str) -> str:
+    """Remove zero-width and Unicode Tag chars to defeat regex evasion, e.g.
+    an attacker writing "ign​ore" to slip past the \\s+ in a pattern."""
+    chars = []
+    for c in content:
+        cp = ord(c)
+        if c in ZERO_WIDTH_CHARS:
+            continue
+        if UNICODE_TAG_START <= cp <= UNICODE_TAG_END:
+            continue
+        chars.append(c)
+    return "".join(chars)
 
 # Bidirectional control characters. The override/embedding/isolate family
 # reorders how text renders without changing what a parser reads (Trojan
@@ -415,6 +493,113 @@ def detect_hidden_base64(content: str) -> list[dict]:
     return findings
 
 
+def detect_hidden_hex(content: str) -> list[dict]:
+    """Find hex-encoded strings and check decoded content for danger."""
+    findings = []
+    lines = content.split("\n")
+    for line_num, line in enumerate(lines, 1):
+        for m in HEX_PATTERN.finditer(line):
+            candidate = m.group(1)
+            try:
+                decoded = bytes.fromhex(candidate).decode("utf-8", errors="ignore")
+                if len(decoded) < 4:
+                    continue
+                match = _check_phrase_match(decoded)
+                if match:
+                    findings.append({
+                        "type": "encoding",
+                        "severity": "medium",
+                        "score": SEVERITY_SCORES["medium"],
+                        "line": line_num,
+                        "content": f"Hex: '{candidate[:80]}' -> '{decoded[:120]}'",
+                        "pattern_matched": "hidden_hex",
+                        "description": f"Hex-encoded string decodes to content "
+                                       f"containing: '{match}'",
+                    })
+                for sev, compiled_list in COMPILED_PATTERNS.items():
+                    for entry in compiled_list:
+                        if entry["regex"].search(decoded):
+                            findings.append({
+                                "type": "encoding",
+                                "severity": sev,
+                                "score": entry["score"],
+                                "line": line_num,
+                                "content": f"Hex: '{candidate[:80]}' "
+                                           f"-> '{decoded[:120]}'",
+                                "pattern_matched": f"hex_{entry['name']}",
+                                "description": f"Hex-encoded content matches "
+                                               f"pattern: {entry['desc']}",
+                            })
+            except Exception:
+                continue
+    return findings
+
+
+def detect_hidden_url_encoding(content: str) -> list[dict]:
+    """Find URL-encoded strings and check decoded content for danger."""
+    findings = []
+    lines = content.split("\n")
+    for line_num, line in enumerate(lines, 1):
+        for m in URL_ENCODED_PATTERN.finditer(line):
+            candidate = m.group(0)
+            try:
+                decoded = unquote(candidate)
+                if decoded == candidate:
+                    continue
+                match = _check_phrase_match(decoded)
+                if match:
+                    findings.append({
+                        "type": "encoding",
+                        "severity": "medium",
+                        "score": SEVERITY_SCORES["medium"],
+                        "line": line_num,
+                        "content": f"URL-encoded: '{candidate[:80]}' -> '{decoded[:120]}'",
+                        "pattern_matched": "hidden_url_encoding",
+                        "description": f"URL-encoded string decodes to content "
+                                       f"containing: '{match}'",
+                    })
+                for sev, compiled_list in COMPILED_PATTERNS.items():
+                    for entry in compiled_list:
+                        if entry["regex"].search(decoded):
+                            findings.append({
+                                "type": "encoding",
+                                "severity": sev,
+                                "score": entry["score"],
+                                "line": line_num,
+                                "content": f"URL-encoded: '{candidate[:80]}' "
+                                           f"-> '{decoded[:120]}'",
+                                "pattern_matched": f"url_encoded_{entry['name']}",
+                                "description": f"URL-encoded content matches "
+                                               f"pattern: {entry['desc']}",
+                            })
+            except Exception:
+                continue
+    return findings
+
+
+def detect_hidden_rot13(content: str) -> list[dict]:
+    """Detect ROT13-obfuscated dangerous phrases -- a common trick in
+    jailbreak PoCs to slip keywords past naive filters."""
+    findings = []
+    lines = content.split("\n")
+    for line_num, line in enumerate(lines, 1):
+        if not re.search(r"[A-Za-z]{6,}", line):
+            continue
+        decoded = codecs.decode(line, "rot_13")
+        match = _check_phrase_match(decoded)
+        if match:
+            findings.append({
+                "type": "encoding",
+                "severity": "medium",
+                "score": SEVERITY_SCORES["medium"],
+                "line": line_num,
+                "content": f"ROT13: '{line.strip()[:80]}' -> '{decoded.strip()[:120]}'",
+                "pattern_matched": "hidden_rot13",
+                "description": f"ROT13-decoded line contains dangerous phrase: '{match}'",
+            })
+    return findings
+
+
 def detect_zero_width(content: str) -> list[dict]:
     """Detect zero-width characters that could hide messages."""
     findings = []
@@ -546,6 +731,53 @@ def detect_homoglyphs(content: str) -> list[dict]:
     return findings
 
 
+# Fullwidth Forms (e.g. "ｉｇｎｏｒｅ") and Mathematical Alphanumeric Symbols
+# (bold/italic/script/fraktur/double-struck/sans-serif/monospace letter and
+# digit variants) both render as normal-looking letters but are distinct
+# codepoints from ASCII, so a naive keyword regex never sees them. NFKC
+# normalization maps both back to plain ASCII -- exactly what a human or the
+# model perceives -- so decoding the whole line and re-checking for a
+# dangerous phrase catches a word spelled entirely in lookalike chars, not
+# just the presence of a single confusable character.
+def detect_confusable_ascii(content: str) -> list[dict]:
+    """Detect fullwidth/mathematical-alphanumeric lookalikes of ASCII letters."""
+    findings = []
+    lines = content.split("\n")
+    for line_num, line in enumerate(lines, 1):
+        confusable_chars = [c for c in line if ord(c) > 0x2000 and
+                             unicodedata.normalize("NFKC", c) != c and
+                             unicodedata.normalize("NFKC", c).isascii()]
+        if not confusable_chars:
+            continue
+        normalized = unicodedata.normalize("NFKC", line)
+        match = _check_phrase_match(normalized)
+        preview = "".join(confusable_chars[:10])
+        if match:
+            findings.append({
+                "type": "encoding",
+                "severity": "high",
+                "score": SEVERITY_SCORES["high"],
+                "line": line_num,
+                "content": f"Confusable chars '{preview}' normalize to: "
+                           f"'{normalized.strip()[:150]}'",
+                "pattern_matched": "confusable_ascii_lookalikes",
+                "description": f"Fullwidth/mathematical-alphanumeric lookalike "
+                               f"characters normalize to dangerous phrase: '{match}'",
+            })
+        else:
+            findings.append({
+                "type": "encoding",
+                "severity": "low",
+                "score": SEVERITY_SCORES["low"],
+                "line": line_num,
+                "content": f"Confusable chars found: '{preview}'",
+                "pattern_matched": "confusable_ascii_lookalikes",
+                "description": "Fullwidth/mathematical-alphanumeric lookalike "
+                               "characters found -- may be used to evade keyword filters",
+            })
+    return findings
+
+
 def detect_hidden_comments(content: str, filepath: str) -> list[dict]:
     """Detect hidden comments in HTML/JSON/Markdown with instructions."""
     findings = []
@@ -607,10 +839,14 @@ def scan_steganographic(content: str, filepath: str) -> list[dict]:
     findings.extend(detect_first_word_pattern(content))
     findings.extend(detect_diagonal_pattern(lines))
     findings.extend(detect_hidden_base64(content))
+    findings.extend(detect_hidden_hex(content))
+    findings.extend(detect_hidden_url_encoding(content))
+    findings.extend(detect_hidden_rot13(content))
     findings.extend(detect_zero_width(content))
     findings.extend(detect_unicode_tags(content))
     findings.extend(detect_bidi_override(content))
     findings.extend(detect_homoglyphs(content))
+    findings.extend(detect_confusable_ascii(content))
     findings.extend(detect_hidden_comments(content, filepath))
 
     return findings
@@ -933,6 +1169,7 @@ def scan_file(filepath: Path, base_dir: Path, max_size: int = DEFAULT_MAX_FILE_S
     detections = []
     detections.extend(scan_direct_patterns(content, rel_path))
     detections.extend(scan_steganographic(content, rel_path))
+    detections.extend(scan_filename(filepath, rel_path))
 
     score = compute_file_score(detections)
     classification = classify(score, detections)

