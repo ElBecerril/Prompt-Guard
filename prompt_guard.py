@@ -313,17 +313,25 @@ def scan_direct_patterns(content: str, filepath: str) -> list[dict]:
 
 
 def scan_filename(filepath: Path, rel_path: str) -> list[dict]:
-    """Run pattern detection against the filename itself. Hidden instructions
-    can be smuggled in a file/PR name (e.g. "ignore all previous instructions.md")
-    and never show up in a content-only scan. Reuses scan_direct_patterns so
-    filenames also benefit from the zero-width-evasion second pass."""
-    findings = scan_direct_patterns(filepath.name, rel_path)
+    """Run pattern + steganographic detection against the filename itself.
+    Hidden instructions can be smuggled in a file/PR name (e.g. "ignore all
+    previous instructions.md"), and visual spoofing -- homoglyphs, bidi
+    override (the classic "invoice‮cod.exe" filename trick), zero-width
+    padding -- targets filenames specifically. None of that shows up in a
+    content-only scan. Reuses scan_direct_patterns so filenames also benefit
+    from the zero-width-evasion second pass."""
+    name = filepath.name
+    findings = scan_direct_patterns(name, rel_path)
+    findings.extend(detect_zero_width(name))
+    findings.extend(detect_bidi_override(name))
+    findings.extend(detect_homoglyphs(name))
+    findings.extend(detect_confusable_ascii(name))
     for f in findings:
         f["type"] = "filename"
         f["line"] = 0
-        f["content"] = filepath.name
+        f["content"] = name
         f["pattern_matched"] = f"filename_{f['pattern_matched']}"
-        f["description"] = f"Filename itself matches injection pattern: {f['description']}"
+        f["description"] = f"Filename itself triggered detection: {f['description']}"
     return findings
 
 
@@ -345,7 +353,20 @@ ZERO_WIDTH_CHARS = {
     "\ufeff": "ZERO WIDTH NO-BREAK SPACE (BOM)",
     "\u2060": "WORD JOINER",
     "\u180e": "MONGOLIAN VOWEL SEPARATOR",
+    "\u00ad": "SOFT HYPHEN",
+    "\u034f": "COMBINING GRAPHEME JOINER",
+    "\u2061": "FUNCTION APPLICATION",
+    "\u2062": "INVISIBLE TIMES",
+    "\u2063": "INVISIBLE SEPARATOR",
+    "\u2064": "INVISIBLE PLUS",
 }
+
+# Variation Selectors block (U+FE00-FE0F): invisible-by-themselves codepoints
+# that normally modify the glyph of the character before them, but with no
+# preceding character (or an unsupported one) they render as nothing --
+# another way to break up a keyword mid-word.
+VARIATION_SELECTOR_START = 0xFE00
+VARIATION_SELECTOR_END = 0xFE0F
 
 CYRILLIC_HOMOGLYPHS = {
     "\u0410": "A", "\u0412": "B", "\u0421": "C", "\u0415": "E",
@@ -372,12 +393,15 @@ UNICODE_TAG_CANCEL = 0xE007F    # CANCEL TAG
 
 
 def strip_invisible_chars(content: str) -> str:
-    """Remove zero-width and Unicode Tag chars to defeat regex evasion, e.g.
-    an attacker writing "ign​ore" to slip past the \\s+ in a pattern."""
+    """Remove zero-width, Variation Selector, and Unicode Tag chars to defeat
+    regex evasion, e.g. an attacker writing "ign​ore" to slip past the \\s+
+    in a pattern."""
     chars = []
     for c in content:
         cp = ord(c)
         if c in ZERO_WIDTH_CHARS:
+            continue
+        if VARIATION_SELECTOR_START <= cp <= VARIATION_SELECTOR_END:
             continue
         if UNICODE_TAG_START <= cp <= UNICODE_TAG_END:
             continue
@@ -638,7 +662,7 @@ def detect_hidden_rot13(content: str) -> list[dict]:
 
 
 def detect_zero_width(content: str) -> list[dict]:
-    """Detect zero-width characters that could hide messages."""
+    """Detect zero-width/invisible characters that could hide messages."""
     findings = []
     lines = content.split("\n")
     for line_num, line in enumerate(lines, 1):
@@ -655,6 +679,22 @@ def detect_zero_width(content: str) -> list[dict]:
                     "description": f"Zero-width character '{name}' found {count} "
                                    f"time(s) -- may hide steganographic content",
                 })
+
+        vs_chars = [c for c in line
+                    if VARIATION_SELECTOR_START <= ord(c) <= VARIATION_SELECTOR_END]
+        if vs_chars:
+            findings.append({
+                "type": "encoding",
+                "severity": "medium",
+                "score": SEVERITY_SCORES["medium"],
+                "line": line_num,
+                "content": f"Found {len(vs_chars)}x Variation Selector "
+                           f"(U+{ord(vs_chars[0]):04X}...)",
+                "pattern_matched": "variation_selector_chars",
+                "description": "Variation Selector character(s) found with no "
+                               "preceding base glyph -- renders as nothing, may "
+                               "hide steganographic content",
+            })
     return findings
 
 
@@ -940,6 +980,41 @@ def clone_github_repo(url: str) -> str:
 def is_github_url(source: str) -> bool:
     """Check if source looks like a GitHub URL."""
     return source.startswith(("https://github.com/", "git@github.com:"))
+
+
+def get_head_commit_message(repo_dir: str) -> str | None:
+    """Return the HEAD commit's full message, or None if `repo_dir` isn't a
+    git repo (or git isn't available). Even a --depth 1 clone still carries
+    the HEAD commit's message -- plain text fully controlled by whoever
+    authored that commit, and never scanned before now."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_dir, "log", "-1", "--format=%B"],
+            check=True, capture_output=True, text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    return result.stdout
+
+
+def scan_commit_message(repo_dir: str) -> dict | None:
+    """Scan the HEAD commit message as a pseudo-file. Returns None when
+    there's no message to scan (not a git repo, or an empty message)."""
+    message = get_head_commit_message(repo_dir)
+    if not message or not message.strip():
+        return None
+    label = "<git commit message>"
+    detections = []
+    detections.extend(scan_direct_patterns(message, label))
+    detections.extend(scan_steganographic(message, label))
+    score = compute_file_score(detections)
+    classification = classify(score, detections)
+    return {
+        "file": label,
+        "score": score,
+        "classification": classification,
+        "detections": detections,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1260,11 +1335,15 @@ def _interactive_scan_folder():
         files = get_files_local(scan_dir, extensions)
         print(f"{Fore.CYAN}  Files found: {len(files)}{Style.RESET_ALL}\n")
 
-        if not files:
+        results = []
+        commit_result = scan_commit_message(scan_dir)
+        if commit_result:
+            results.append(commit_result)
+
+        if not files and not commit_result:
             print(f"{Fore.YELLOW}  No files matched the given extensions.{Style.RESET_ALL}")
             return
 
-        results = []
         for i, fpath in enumerate(files, 1):
             print(f"\r  Scanning [{i}/{len(files)}] {fpath.name[:40]:<40s}",
                   end="", flush=True)
@@ -1407,12 +1486,18 @@ Examples:
         files = get_files_local(scan_dir, extensions, exclude)
         print(f"{Fore.CYAN}Files found: {len(files)}{Style.RESET_ALL}\n")
 
-        if not files:
+        results = []
+        # Even a --depth 1 clone carries the HEAD commit's message; scan it
+        # as a pseudo-file so it's covered by the same detectors as content.
+        commit_result = scan_commit_message(scan_dir)
+        if commit_result:
+            results.append(commit_result)
+
+        if not files and not commit_result:
             print(f"{Fore.YELLOW}No files matched the given extensions.{Style.RESET_ALL}")
             return
 
         # Scan each file
-        results = []
         for i, fpath in enumerate(files, 1):
             print(f"\r  Scanning [{i}/{len(files)}] {fpath.name[:40]:<40s}", end="", flush=True)
             results.append(scan_file(fpath, base_dir, max_size))
