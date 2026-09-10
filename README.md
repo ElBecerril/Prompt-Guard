@@ -113,7 +113,9 @@ python prompt_guard.py <source> [options]
 
 ### Default extensions
 
-`.md` `.txt` `.json` `.yaml` `.yml` `.py` `.html` `.htm` `.xml` `.csv` `.rst` `.toml` `.ini` `.cfg` `.conf` `.js` `.ts` `.jsx` `.tsx` `.sh` `.bat` `.ps1`
+`.md` `.txt` `.json` `.yaml` `.yml` `.py` `.html` `.htm` `.xml` `.csv` `.rst` `.toml` `.ini` `.cfg` `.conf` `.js` `.ts` `.jsx` `.tsx` `.sh` `.bat` `.ps1` `.ipynb` `.vue` `.svelte` `.env` `.lock` `.svg`
+
+Also always scanned regardless of extension: `Dockerfile`, `Makefile`, `Jenkinsfile`, `Containerfile`, `Procfile`, `Vagrantfile`, `Rakefile`.
 
 ### Skipped directories
 
@@ -191,7 +193,11 @@ python -m pytest tests/ -v
 - Scanning `prompt_guard.py` itself will produce false positives (expected -- it contains the pattern definitions).
 - Patterns like `subprocess` and `eval()` may flag legitimate code. Always review findings manually.
 - No parallel file scanning yet. Large repos are scanned sequentially.
-- This is a **first line of defense**. It analyzes text content only and does not execute code. Human review of findings is always recommended.
+- **It's a syntactic/keyword scanner, not a semantic one.** An instruction phrased without any of the known trigger words or patterns (e.g. plausible-sounding "documentation" that quietly tells an AI assistant to do something) will not be flagged. This is a structural limit of pattern matching, not a bug.
+- Homoglyph/confusable coverage is not exhaustive -- `CYRILLIC_HOMOGLYPHS`/`GREEK_HOMOGLYPHS` are small curated lookups, not the full Unicode confusables table. Other scripts can still be used to spoof Latin letters.
+- Encoding detection (`base64`/`hex`/URL-encoding/ROT13) only decodes one layer. Chained/double encoding, or a payload split across multiple lines so no single line contains the full encoded blob, evades it.
+- GitHub scans use `git clone --depth 1`: other branches, tags, and prior commit messages are never inspected.
+- This is a **first line of defense**. It analyzes text content only and does not execute code. Human review of findings is always recommended -- especially for anything sourced from an untrusted or unverified origin.
 
 ## License
 

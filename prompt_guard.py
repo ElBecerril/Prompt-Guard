@@ -201,6 +201,17 @@ DEFAULT_EXTENSIONS = {
     ".md", ".txt", ".json", ".yaml", ".yml", ".py", ".html", ".htm",
     ".xml", ".csv", ".rst", ".toml", ".ini", ".cfg", ".conf",
     ".js", ".ts", ".jsx", ".tsx", ".sh", ".bat", ".ps1",
+    # Vectors an attacker targeting an AI agent would try precisely because
+    # they weren't in the original list: notebook cells, single-file
+    # frontend components, env/lock files, and inline-scriptable SVG.
+    ".ipynb", ".vue", ".svelte", ".env", ".lock", ".svg",
+}
+
+# Extensionless files that commonly carry instructions/config as plain text
+# (Path.suffix is "" for these, so DEFAULT_EXTENSIONS alone never matches them).
+DEFAULT_EXTENSIONLESS_NAMES = {
+    "Dockerfile", "Makefile", "Jenkinsfile", "Containerfile",
+    "Procfile", "Vagrantfile", "Rakefile",
 }
 
 # Pre-compile auxiliary patterns once at module load
@@ -272,6 +283,32 @@ def scan_direct_patterns(content: str, filepath: str) -> list[dict]:
                                            f"characters -- likely regex evasion "
                                            f"({entry['desc']})",
                         })
+
+    # Third pass: run every pattern against the raw, un-split content. `\s+`
+    # matches a newline by default, but a match spanning two lines can never
+    # be found by the per-line passes above, since a manually split line
+    # never contains the "\n" the pattern needs to see. Only report matches
+    # that actually cross a line break -- anything else was already found
+    # (and already scored) by the per-line pass.
+    for severity, compiled_list in COMPILED_PATTERNS.items():
+        for entry in compiled_list:
+            for match in entry["regex"].finditer(content):
+                if "\n" not in match.group(0):
+                    continue
+                line_num = content[:match.start()].count("\n") + 1
+                key = (entry["name"], line_num)
+                if key in raw_matches:
+                    continue
+                raw_matches.add(key)
+                findings.append({
+                    "type": "direct_pattern",
+                    "severity": severity,
+                    "score": entry["score"],
+                    "line": line_num,
+                    "content": match.group(0).strip()[:200].replace("\n", " ⏎ "),
+                    "pattern_matched": entry["name"],
+                    "description": f"{entry['desc']} (match spans multiple lines)",
+                })
     return findings
 
 
@@ -875,7 +912,8 @@ def get_files_local(directory: str, extensions: set[str],
         rel = str(path.relative_to(root))
         if exclude and any(rel == e or rel.replace("\\", "/") == e for e in exclude):
             continue
-        if path.is_file() and path.suffix.lower() in extensions:
+        if path.is_file() and (path.suffix.lower() in extensions
+                                or path.name in DEFAULT_EXTENSIONLESS_NAMES):
             files.append(path)
     return files
 
@@ -1125,31 +1163,23 @@ def scan_file(filepath: Path, base_dir: Path, max_size: int = DEFAULT_MAX_FILE_S
     """Scan a single file and return results."""
     rel_path = str(filepath.relative_to(base_dir))
 
-    # Skip files exceeding max size
     try:
         file_size = filepath.stat().st_size
     except OSError:
         file_size = 0
-    if file_size > max_size:
-        return {
-            "file": rel_path,
-            "score": 0,
-            "classification": "SAFE",
-            "detections": [{
-                "type": "skipped",
-                "severity": "low",
-                "score": 0,
-                "line": 0,
-                "content": f"File size {file_size / 1024 / 1024:.1f}MB exceeds limit "
-                           f"{max_size / 1024 / 1024:.1f}MB",
-                "pattern_matched": "file_too_large",
-                "description": f"File skipped: size ({file_size / 1024 / 1024:.1f}MB) "
-                               f"exceeds --max-size limit",
-            }],
-        }
+    truncated = file_size > max_size
 
     try:
-        content = filepath.read_text(encoding="utf-8", errors="replace")
+        if truncated:
+            # Don't skip oversized files outright: a file previously came
+            # back SAFE with zero bytes read once it crossed --max-size,
+            # which means padding a file past the limit was a free way to
+            # hide a payload from the scanner entirely. Scan whatever fits
+            # in the size budget instead of nothing.
+            with filepath.open("rb") as fh:
+                content = fh.read(max_size).decode("utf-8", errors="replace")
+        else:
+            content = filepath.read_text(encoding="utf-8", errors="replace")
     except Exception as e:
         return {
             "file": rel_path,
@@ -1171,8 +1201,27 @@ def scan_file(filepath: Path, base_dir: Path, max_size: int = DEFAULT_MAX_FILE_S
     detections.extend(scan_steganographic(content, rel_path))
     detections.extend(scan_filename(filepath, rel_path))
 
+    if truncated:
+        detections.append({
+            "type": "skipped",
+            "severity": "low",
+            "score": SEVERITY_SCORES["low"],
+            "line": 0,
+            "content": f"File size {file_size / 1024 / 1024:.1f}MB exceeds limit "
+                       f"{max_size / 1024 / 1024:.1f}MB -- only the first "
+                       f"{max_size / 1024 / 1024:.1f}MB were scanned",
+            "pattern_matched": "file_truncated",
+            "description": "File exceeds --max-size: only the readable prefix was "
+                           "scanned. A padded file can hide a payload past this "
+                           "cutoff -- review the rest of the file manually.",
+        })
+
     score = compute_file_score(detections)
     classification = classify(score, detections)
+    if truncated and classification == "SAFE":
+        # "Nothing found in what we read" is not the same guarantee as
+        # "nothing found in the file" -- never report a truncated scan as clean.
+        classification = "SUSPICIOUS"
 
     return {
         "file": rel_path,
